@@ -74,9 +74,9 @@ void node_free(node_t *node) {
 
 node_t* node_group(lexer_t *lex) {
     node_t *expr = node_expr(lex, 0);
-    if(lex->token.type != TK_RPAREN) {
-        fprintf(stderr, "')' missing at: %d\n", lex->token.start - lex->source);
-        return NULL;
+    if(!expr) return NULL;
+    if(lex->token.type != TK_RPAREN){
+        node_error(ERR_RPAREN, lex->token.start - lex->source);
     }
     return expr;
 }
@@ -98,6 +98,7 @@ node_t* node_id(lexer_t *lex) {
 node_t* node_binop(lexer_t *lex, node_t *left) {
     token_type_t op = lex->token.type;
     node_t *right = node_expr(lex, node_handler[op].lbp);
+    if(!right) return NULL;
     node_t *node = node_alloc(lex, ND_BINOP);
     node->op = op;
     node->child = left;
@@ -120,23 +121,42 @@ node_t* node_expr(lexer_t *lex, int rbp) {
     prefix_fun_t prefix = node_handler[lex->token.type].prefix;
     node_t *node = prefix ? prefix(lex) : NULL;
     if(!node){
-        fprintf(stderr, "Wrong token at: %d\n", lex->token.start - lex->source);
-        return NULL; // Tu chce coś innego niż exit...
+        return node_error(ERR_BAD_TK, lex->token.start - lex->source);
     }
     next_token(lex);
     while(rbp < node_handler[lex->token.type].lbp) {
         infix_fun_t infix = node_handler[lex->token.type].infix;
         node = infix ? infix(lex, node) : node;
+        if(!node) return NULL;
     }
     return node;
 }
 
-node_t* parse(char *expr){
+static parse_err_t error = {0};
+
+node_t* node_error(err_t type, int pos){
+    if(type == error.type && pos == error.pos) return NULL;
+    error.type = type;
+    error.pos = pos;
+    switch (type) {
+        case ERR_BAD_TK:
+            fprintf(stderr, "Wrong token at: %d\n", pos);
+            break;
+        case ERR_RPAREN:
+            fprintf(stderr, "')' missing at: %d\n", pos);
+            break;
+        default:
+            break;
+    }
+    return NULL;
+}
+
+node_t* parse(char *expr) {
     lexer_t lex = lexer(expr);
     return node_expr(&lex, 0);
 }
 
-void node_print(node_t *node, int indent){
+void node_print(node_t *node, int indent) {
     if (!node) return;
     for (int i = 0; i < indent; i++) printf("  ");
     switch(node->type) {
@@ -154,27 +174,19 @@ void node_print(node_t *node, int indent){
 
 // --------------------- main ----------------------
 
-int main(int argc, char *argv[]){ 
+#define BUFSIZE 256
+
+int main(int argc, char *argv[]) { 
     
-    printf("Witam\n");
+    char buffer[BUFSIZE];
 
-    //char *expr = "1/(22*x+4)-2*(123-x)+sin(0.231)";
-    char *expr = "1/(/22*x+4)-2*(123-x)";
-
-    node_t *root = parse(expr);
-    node_print(root, 0);
-
-    return 0;
-
-    lexer_t lex = lexer(expr);
-    next_token(&lex);
-    while(lex.token.type != TK_EOF){
-        printf("[");
-        fwrite(lex.token.start, 1, lex.token.length, stdout);
-        printf("], ");
-        next_token(&lex);
+    fprintf(stdout, ">> ");
+    while(fgets(buffer, BUFSIZE, stdin) != NULL){
+        if(strncmp(buffer, "exit", 4) == 0) break;
+        node_t *root = parse(buffer);
+        node_print(root, 0);
+        fprintf(stdout, ">> ");
     }
-    printf("\n");
 
     return 0;
 }

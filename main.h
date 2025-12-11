@@ -66,6 +66,16 @@ typedef struct {
     int lbp;
 } node_handler_t;
 
+typedef enum {
+    ERR_BAD_TK = 1,
+    ERR_RPAREN,
+} err_t;
+
+typedef struct {
+    int type;
+    int pos;
+} parse_err_t;
+
 node_t* node_alloc(lexer_t *lex, node_type_t type);
 void node_free(node_t *node) ;
 node_t* node_group(lexer_t *lex);
@@ -75,6 +85,7 @@ node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
 node_t* node_call(lexer_t *lex);
 node_t* node_expr(lexer_t *lex, int rbp);
+node_t* node_error(err_t type, int pos);
 node_t* parse(char *expr);
 
 #endif
