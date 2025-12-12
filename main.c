@@ -8,36 +8,39 @@
 // ================ Lexer ================ //
 
 void next_token(lexer_t *lex) {
+    lex->token = lex->peek;
+
     while(*lex->pos && isspace(*lex->pos)) lex->pos++;
 
-    lex->token.start = lex->pos;
-    lex->token.length = 1;
+    lex->peek.start = lex->pos;
+    lex->peek.length = 1;
 
-    if(!*lex->pos) { lex->token.type = TK_EOF; return; }
+    if(!*lex->pos) { lex->peek.type = TK_EOF; return; }
 
     char c = *lex->pos++;
 
     if(isdigit(c)) {
-        lex->token.number = strtod(lex->token.start, &lex->pos);
-        lex->token.type = TK_NUM;
-        lex->token.length = lex->pos - lex->token.start;
+        lex->peek.number = strtod(lex->peek.start, &lex->pos);
+        lex->peek.type = TK_NUM;
+        lex->peek.length = lex->pos - lex->peek.start;
         return;
     }
     if(isalpha(c)) {
         while(isalpha(*lex->pos)) lex->pos++;
-        lex->token.type = TK_ID;
-        lex->token.length = lex->pos - lex->token.start;
+        lex->peek.type = TK_ID;
+        lex->peek.length = lex->pos - lex->peek.start;
         return;
     }
 
-    lex->token.type = c;
+    lex->peek.type = c;
 }
 
 lexer_t lexer(char *str) {
     lexer_t lex;
     lex.source = str;
     lex.pos = lex.source;
-    //next_token(&lex);
+    lex.error = 0;
+    next_token(&lex);
     return lex;
 }
 
@@ -47,12 +50,14 @@ node_handler_t node_handler[] = {
     [TK_NUM]    = {node_num,    NULL,       0},
     [TK_ID]     = {node_id,     NULL,       0},
     [TK_LPAREN] = {node_group,  NULL,       0},
-    [TK_RPAREN] = {node_group,  NULL,       0},
     [TK_PLUS]   = {NULL,        node_binop, 10},
-    [TK_MINUS]  = {NULL,        node_binop, 10},
+    [TK_MINUS]  = {node_unop,   node_binop, 10},
     [TK_MULT]   = {NULL,        node_binop, 20},
     [TK_DIV]    = {NULL,        node_binop, 20},
-    [TK_POW]    = {NULL,        node_binop, 30},
+    [TK_B_AND]  = {NULL,        node_binop, 30},
+    [TK_B_OR]   = {NULL,        node_binop, 30},
+    [TK_B_XOR]  = {NULL,        node_binop, 30},
+    [TK_B_NEG]  = {node_unop,   NULL,       30},
 };
 
 node_t* node_alloc(lexer_t *lex, node_type_t type) {
@@ -75,8 +80,9 @@ void node_free(node_t *node) {
 node_t* node_group(lexer_t *lex) {
     node_t *expr = node_expr(lex, 0);
     if(!expr) return NULL;
+    next_token(lex);
     if(lex->token.type != TK_RPAREN){
-        node_error(ERR_RPAREN, lex->token.start - lex->source);
+        node_error(lex, ERR_RPAREN);
     }
     return expr;
 }
@@ -89,13 +95,14 @@ node_t* node_num(lexer_t *lex) {
 
 node_t* node_id(lexer_t *lex) {
     node_t *node = node_alloc(lex, ND_ID);
-    char *name = (char*) malloc(lex->token.length + 1);
-    memcpy(name, lex->token.start, lex->token.length);
-    name[lex->token.length] = '\0';
+    node->id = (char*) malloc(lex->token.length + 1);
+    memcpy(node->id, lex->token.start, lex->token.length);
+    node->id[lex->token.length] = '\0';
     return node;
 }
 
 node_t* node_binop(lexer_t *lex, node_t *left) {
+    next_token(lex);
     token_type_t op = lex->token.type;
     node_t *right = node_expr(lex, node_handler[op].lbp);
     if(!right) return NULL;
@@ -107,7 +114,12 @@ node_t* node_binop(lexer_t *lex, node_t *left) {
 }
 
 node_t* node_unop(lexer_t *lex) {
+    token_type_t op = lex->token.type;
+    node_t *expr = node_expr(lex, node_handler[op].lbp);
+    if(!expr) return NULL;
     node_t *node = node_alloc(lex, ND_UNOP);
+    node->op = op;
+    node->child = expr;
     return node;
 }
 
@@ -120,30 +132,23 @@ node_t* node_expr(lexer_t *lex, int rbp) {
     next_token(lex);
     prefix_fun_t prefix = node_handler[lex->token.type].prefix;
     node_t *node = prefix ? prefix(lex) : NULL;
-    if(!node){
-        return node_error(ERR_BAD_TK, lex->token.start - lex->source);
-    }
-    next_token(lex);
-    while(rbp < node_handler[lex->token.type].lbp) {
-        infix_fun_t infix = node_handler[lex->token.type].infix;
+    if(!node) return node_error(lex, ERR_EXPR);
+    while(rbp < node_handler[lex->peek.type].lbp) {
+        infix_fun_t infix = node_handler[lex->peek.type].infix;
         node = infix ? infix(lex, node) : node;
-        if(!node) return NULL;
     }
     return node;
 }
 
-static parse_err_t error = {0};
-
-node_t* node_error(err_t type, int pos){
-    if(type == error.type && pos == error.pos) return NULL;
-    error.type = type;
-    error.pos = pos;
+node_t* node_error(lexer_t *lex, err_t type){
+    if(lex->error) return NULL;
+    lex->error = type;
     switch (type) {
-        case ERR_BAD_TK:
-            fprintf(stderr, "Wrong token at: %d\n", pos);
+        case ERR_EXPR:
+            fprintf(stderr, "Syntax error: %d\n", lex->token.start - lex->source);
             break;
         case ERR_RPAREN:
-            fprintf(stderr, "')' missing at: %d\n", pos);
+            fprintf(stderr, "')' missing at: %d\n", lex->token.start - lex->source);
             break;
         default:
             break;
@@ -152,7 +157,9 @@ node_t* node_error(err_t type, int pos){
 }
 
 node_t* parse(char *expr) {
+    err_t error = 0;
     lexer_t lex = lexer(expr);
+    if(lex.peek.type == TK_EOF) return NULL;
     return node_expr(&lex, 0);
 }
 
@@ -167,10 +174,16 @@ void node_print(node_t *node, int indent) {
             node_print(node->child, indent + 1);
             node_print(node->child->next, indent + 1);
             break;
+        case ND_UNOP:
+            printf("UNOP %c\n", node->op);
+            node_print(node->child, indent + 1);
     }
 }
 
- 
+double node_eval(node_t *node){
+
+    return 0;
+}
 
 // --------------------- main ----------------------
 
@@ -185,6 +198,7 @@ int main(int argc, char *argv[]) {
         if(strncmp(buffer, "exit", 4) == 0) break;
         node_t *root = parse(buffer);
         node_print(root, 0);
+        node_free(root);
         fprintf(stdout, ">> ");
     }
 

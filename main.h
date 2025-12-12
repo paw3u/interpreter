@@ -7,13 +7,16 @@ typedef enum {
     TK_EOF = 0,
     TK_NUM,
     TK_ID,
-    TK_PLUS = '+',
-    TK_MINUS = '-',
-    TK_MULT = '*',
-    TK_DIV = '/',
-    TK_POW = '^',
-    TK_LPAREN = '(',
-    TK_RPAREN = ')',
+    TK_PLUS     = '+',
+    TK_MINUS    = '-',
+    TK_MULT     = '*',
+    TK_DIV      = '/',
+    TK_B_AND    = '&',
+    TK_B_OR     = '|',
+    TK_B_XOR    = '^',
+    TK_B_NEG    = '~',
+    TK_LPAREN   = '(',
+    TK_RPAREN   = ')',
 } token_type_t;
 
 typedef struct {
@@ -27,6 +30,8 @@ typedef struct {
     char *source;
     char *pos;
     token_t token;
+    token_t peek;
+    int error;
 } lexer_t;
 
 
@@ -67,7 +72,8 @@ typedef struct {
 } node_handler_t;
 
 typedef enum {
-    ERR_BAD_TK = 1,
+    ERR_EXPR = 1,
+    ERR_BINOP,
     ERR_RPAREN,
 } err_t;
 
@@ -85,7 +91,7 @@ node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
 node_t* node_call(lexer_t *lex);
 node_t* node_expr(lexer_t *lex, int rbp);
-node_t* node_error(err_t type, int pos);
+node_t* node_error(lexer_t *lex, err_t type);
 node_t* parse(char *expr);
 
 #endif
