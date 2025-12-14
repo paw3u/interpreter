@@ -72,7 +72,7 @@ lexer_t lexer(char *str) {
 }
 
 /*
-*   Parametry operatorów: handlery prefix, infix, moc wiązania, ewaluacja
+*   Parametry operatorów: handlery prefix, infix, moc wiązania
 */
 
 node_handler_t node_handler[] = {
@@ -383,7 +383,8 @@ void binop_arithmetic(node_t *node) {
             new_int(&node->val.ptr, &result, 1);
             return;
         }
-        default: return;
+        default:
+            return;
     }
 }
 
@@ -408,7 +409,7 @@ void unop_negative(node_t *node){
 }
 
 /*
-*   Tablice funkcji ewaluacji operatoró
+*   Tablice funkcji ewaluacji operatorów
 */
 
 op_fun_t binop_eval[] = {
@@ -465,7 +466,6 @@ void set_var(node_t *node, var_tab_t *vars) {
             fprintf(stderr, "Unsupported variable type\n");
             return;
     }
-    memcpy(vars[index].value.ptr, right->val.ptr, sizeof(double));
     vars[index].value.count = right->val.count;
     vars[index].value.type = right->val.type;
     if(!vars[index].name) {
