@@ -23,7 +23,7 @@ typedef enum {
 typedef struct {
     token_type_t type;
     char *start;
-    size_t length;
+    size_t len;
     union {
         double num_flt;
         int num_int;
@@ -87,6 +87,17 @@ typedef node_t* (*infix_fun_t)(lexer_t *lex, node_t *node);
 typedef void (*op_fun_t)(node_t *node);
 
 typedef struct {
+    char *name;
+    op_fun_t fun;
+} keyword_t;
+
+typedef enum {
+    KW_SIN,
+    KW_COS,
+    KEYWORDS_NUM,
+} keyword_type_t;
+
+typedef struct {
     prefix_fun_t prefix;
     infix_fun_t infix;
     int lbp;
@@ -109,7 +120,7 @@ node_t* node_val(lexer_t *lex);
 node_t* node_id(lexer_t *lex);
 node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
-node_t* node_call(lexer_t *lex);
+node_t* node_call(lexer_t *lex, int kw);
 node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, int rbp);
 node_t* node_error(lexer_t *lex, char *msg);
@@ -117,9 +128,14 @@ node_t* node_error(lexer_t *lex, char *msg);
 void binop_arithmetic(node_t *node);
 void unop_negative(node_t *node);
 
+void sin_eval(node_t *node);
+void cos_eval(node_t *node);
+
 void set_var(node_t *node, var_tab_t *vars);
 void get_var(node_t *node, var_tab_t *vars);
 void node_eval(node_t *node);
+
+void eval_error(node_t *node, char *msg);
 
 node_t* parse(char *expr);
 

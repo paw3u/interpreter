@@ -16,7 +16,7 @@ void next_token(lexer_t *lex) {
     while(*lex->pos && isspace(*lex->pos)) lex->pos++;
 
     lex->peek.start = lex->pos;
-    lex->peek.length = 1;
+    lex->peek.len = 1;
 
     if(!*lex->pos) { lex->peek.type = TK_EOF; return; }
 
@@ -32,25 +32,25 @@ void next_token(lexer_t *lex) {
             lex->peek.type = TK_FLT;
             lex->peek.num_flt = strtod(lex->peek.start, &lex->pos);
         }
-        lex->peek.length = lex->pos - lex->peek.start;
+        lex->peek.len = lex->pos - lex->peek.start;
         return;
     }
     if(isalpha(c)) {
         while(isalpha(*lex->pos)) lex->pos++;
         lex->peek.type = TK_ID;
-        lex->peek.length = lex->pos - lex->peek.start;
+        lex->peek.len = lex->pos - lex->peek.start;
         return;
     }
     if(c == '\'') {
         while(*lex->pos && (*lex->pos != '\'' && *(lex->pos - 1) != '\\')) lex->pos++;
         if(!*lex->pos){
-            fprintf(stderr, "Syntax error: ' missing: %lld\n", lex->pos - lex->source);
+            fprintf(stderr, "Syntax error: ' missing [%lld]\n", lex->pos - lex->source);
             lex->error = 1;
             return;
         }
         lex->peek.type = TK_STR; 
         lex->peek.start++;
-        lex->peek.length = lex->pos - lex->peek.start;
+        lex->peek.len = lex->pos - lex->peek.start;
         lex->pos++;
         return;
     }
@@ -81,6 +81,7 @@ node_handler_t node_handler[] = {
     [TK_STR]    = { node_val,   NULL,           0  },
     [TK_ID]     = { node_id,    NULL,           0  },
     [TK_LPAREN] = { node_group, NULL,           0  },
+    [TK_RPAREN] = { NULL,       NULL,           0  },
     [TK_EQ]     = { NULL,       node_assign,    1  },
     [TK_PLUS]   = { NULL,       node_binop,     10 },
     [TK_MINUS]  = { node_unop,  node_binop,     10 },
@@ -90,6 +91,15 @@ node_handler_t node_handler[] = {
     [TK_B_OR]   = { NULL,       node_binop,     30 },
     [TK_B_XOR]  = { NULL,       node_binop,     30 },
     [TK_B_NEG]  = { node_unop,  NULL,           30 },
+};
+
+/*
+*   Słowa kluczowe i funkcje
+*/
+
+keyword_t keywords[] = {
+    [KW_SIN]    = { "sin",      sin_eval },
+    [KW_COS]    = { "cos",      cos_eval },
 };
 
 /*
@@ -183,7 +193,7 @@ node_t* node_val(lexer_t *lex) {
             break;
         case TK_STR:
             node->val.type = TYPE_STR;
-            node->val.count = lex->token.length;
+            node->val.count = lex->token.len;
             new_str(&node->val.ptr, lex->token.start, node->val.count);
             break;
         default:
@@ -197,12 +207,17 @@ node_t* node_val(lexer_t *lex) {
 */
 
 node_t* node_id(lexer_t *lex) {
+    for(size_t i; i < KEYWORDS_NUM; i++) {
+        if(!strncmp(keywords[i].name, lex->token.start, strlen(keywords[i].name))){
+            if(keywords[i].fun) return node_call(lex, i);
+        }
+    }
     node_t *node = node_alloc(lex, ND_ID);
     node->id = (id_node_t*) malloc(sizeof(id_node_t));
     if(!node->id) exit(ENOMEM);
     node->id->name = lex->token.start;
-    node->id->len = lex->token.length;
-    return node;
+    node->id->len = lex->token.len;
+    return node; 
 }
 
 /*
@@ -239,8 +254,16 @@ node_t* node_unop(lexer_t *lex) {
 *   Węzeł wywołania funkcji
 */
 
-node_t* node_call(lexer_t *lex) {
+node_t* node_call(lexer_t *lex, int kw) {
+    next_token(lex);
+    if(lex->token.type != TK_LPAREN){
+        return node_error(lex, "Syntax error: ( missing");
+    }
+    node_t *expr = node_group(lex);
+    if(!expr) return NULL;
     node_t *node = node_alloc(lex, ND_CALL);
+    node->op = kw;
+    node->child = expr;
     return node;
 }
 
@@ -284,7 +307,7 @@ node_t* node_expr(lexer_t *lex, int rbp) {
 node_t* node_error(lexer_t *lex, char *msg){
     if(lex->error) return NULL;
     lex->error = 1;
-    fprintf(stderr, "%s: %lld\n", msg, lex->token.start - lex->source);
+    fprintf(stderr, "%s [%lld]\n", msg, lex->token.start - lex->source);
     return NULL;
 }
 
@@ -295,7 +318,12 @@ node_t* node_error(lexer_t *lex, char *msg){
 node_t* parse(char *expr) {
     lexer_t lex = lexer(expr);
     if(lex.peek.type == TK_EOF) return NULL;
-    return node_expr(&lex, 0);
+    node_t *root = node_expr(&lex, 0);
+    if(lex.peek.type != TK_EOF){
+        next_token(&lex);
+        return node_error(&lex, "Syntax error: unexpected expression");
+    }
+    return root;
 }
 
 /*
@@ -333,6 +361,15 @@ void node_print(node_t *node, int indent) {
         case ND_UNOP:
             fprintf(stdout, "UNOP %c\n", node->op);
             node_print(node->child, indent + 1);
+            break;
+        case ND_CALL:
+            fprintf(stdout, "CALL %s\n", keywords[node->op].name);
+            node_print(node->child, indent + 1);
+            node_t *next = node->child->next;
+            while(next){
+                node_print(next, indent + 1);
+                next = next->next;
+            }
             break;
         default:
             break;
@@ -409,6 +446,53 @@ void unop_negative(node_t *node){
 }
 
 /*
+*   Ewaluacja funkcji wbudowanych
+*/
+
+void sin_eval(node_t *node){
+    node_val_t *val = &node->child->val;
+    switch(val->type){
+        case TYPE_FLT: {
+            double arg = sin(*(double*)val->ptr);
+            new_flt(&node->val.ptr, &arg, val->count);
+            break;
+        }
+        case TYPE_INT: {
+            double arg = sin(*(int*)val->ptr);
+            new_flt(&node->val.ptr, &arg, val->count);
+            break;
+        }
+        default:
+            eval_error(node, "Eval error: incorrect argument type");
+            return;
+    }
+    node->val.type = TYPE_FLT;
+    node->val.count = 1;
+}
+
+void cos_eval(node_t *node){
+    node_val_t *val = &node->child->val;
+    switch(val->type){
+        case TYPE_FLT: {
+            double arg = cos(*(double*)val->ptr);
+            new_flt(&node->val.ptr, &arg, val->count);
+            break;
+        }
+        case TYPE_INT: {
+            double arg = cos(*(int*)val->ptr);
+            new_flt(&node->val.ptr, &arg, val->count);
+            break;
+        }
+        default:
+            eval_error(node, "Eval error: incorrect argument type");
+            return;
+    }
+    node->val.type = TYPE_FLT;
+    node->val.count = 1;
+}
+
+
+/*
 *   Tablice funkcji ewaluacji operatorów
 */
 
@@ -422,6 +506,18 @@ op_fun_t binop_eval[] = {
 op_fun_t unop_eval[] = {
     [TK_MINUS] = unop_negative,
 };
+
+/*
+*   Wydruki błędów ewaluacji
+*/
+
+void eval_error(node_t *node, char *msg){
+    if(node->type == ND_ID){
+        fprintf(stderr, "%s %.*s [%d]\n", msg, (int)node->id->len, node->id->name, node->token_pos);
+        return;
+    }
+    fprintf(stderr, "%s [%d]\n", msg, node->token_pos);
+}
 
 /*
 *   Funkcja hashująca ukradziona z Lua
@@ -446,7 +542,7 @@ void set_var(node_t *node, var_tab_t *vars) {
     while(vars[index].name && strncmp(vars[index].name, left->id->name, left->id->len)){
         index = (index + 1) & (VARTAB_SIZE - 1);
         if(index == start) {
-            fprintf(stderr, "Assignment error: variable table overflow\n");
+            eval_error(node, "Assignment error: variable table overflow");
             return;
         }
     }
@@ -463,7 +559,7 @@ void set_var(node_t *node, var_tab_t *vars) {
             new_str(&vars[index].value.ptr, right->val.ptr, right->val.count);
             break;
         default:
-            fprintf(stderr, "Unsupported variable type\n");
+            eval_error(node, "Unsupported variable type");
             return;
     }
     vars[index].value.count = right->val.count;
@@ -486,7 +582,7 @@ void get_var(node_t *node, var_tab_t *vars){
         }
     }
     if(!vars[index].name || overflow){
-        fprintf(stderr, "Unknown identifier: %.*s\n", (int)node->id->len, node->id->name);
+        eval_error(node, "Unknown identifier:");
         node->val.type = TYPE_NONE;
         return;
     }
@@ -503,7 +599,7 @@ void get_var(node_t *node, var_tab_t *vars){
             new_str(&node->val.ptr, vars[index].value.ptr, node->val.count);
             break;
         default:
-            fprintf(stderr, "Unsupported variable type\n");
+            eval_error(node, "Unsupported variable type");
             return;
     }
 }
@@ -531,6 +627,10 @@ void node_eval(node_t *node){
             return;
         case ND_ASSIGN:
             set_var(node, var_tab);
+            return;
+        case ND_CALL:
+            node_eval(node->child);
+            keywords[node->op].fun(node);
             return;
         default:
             return;
