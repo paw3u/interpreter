@@ -23,6 +23,12 @@ void next_token(lexer_t *lex) {
     char c = *lex->pos++;
 
     if(isdigit(c)) {
+        if(c == '0' && *lex->pos == 'x' && isxdigit(*(lex->pos + 1))){
+            lex->peek.type = TK_INT;
+            lex->peek.num_int = strtol(lex->peek.start, &lex->pos, 16);
+            lex->peek.len = lex->pos - lex->peek.start;
+            return;
+        }
         while(isdigit(*lex->pos)) lex->pos++;
         if(*lex->pos != '.') {
             lex->peek.type = TK_INT;
@@ -87,10 +93,10 @@ node_handler_t node_handler[] = {
     [TK_MINUS]  = { node_unop,  node_binop,     10 },
     [TK_STAR]   = { NULL,       node_binop,     20 },
     [TK_SLASH]  = { NULL,       node_binop,     20 },
-    [TK_B_AND]  = { NULL,       node_binop,     30 },
-    [TK_B_OR]   = { NULL,       node_binop,     30 },
-    [TK_B_XOR]  = { NULL,       node_binop,     30 },
-    [TK_B_NEG]  = { node_unop,  NULL,           30 },
+    [TK_AND]    = { NULL,       node_binop,     30 },
+    [TK_OR]     = { NULL,       node_binop,     30 },
+    [TK_XOR]    = { NULL,       node_binop,     30 },
+    [TK_NEG]    = { node_unop,  NULL,           30 },
 };
 
 /*
@@ -377,7 +383,7 @@ void node_print(node_t *node, int indent) {
 }
 
 /*
-*   Ewaluacja funkcji arytmetycznych
+*   Ewaluacja operacji arytmetycznych
 */
 
 void binop_arithmetic(node_t *node) {
@@ -442,7 +448,45 @@ void unop_negative(node_t *node){
             return;
     }
     node->val.type = val->type;
-    node->val.count = val->count;
+    node->val.count = 1;
+}
+
+/*
+*   Ewaluacja operacji binarnych
+*/
+
+void binop_bianry(node_t *node) {
+    node_t *lhs = node->child;
+    node_t *rhs = node->child->next;
+
+    if(lhs->val.type != TYPE_INT || rhs->val.type != TYPE_INT) {
+        eval_error(node, "Eval error: invalid operand type");
+        return;
+    }
+    
+    node->val.type = TYPE_INT;
+    node->val.count = 1;
+    int result = *(int*)lhs->val.ptr;
+    int operand = *(int*)rhs->val.ptr;
+    switch(node->op) {
+        case TK_OR: result |= operand; break;
+        case TK_AND: result &= operand; break;
+        case TK_XOR: result ^= operand; break;
+        default: break;
+    }
+    new_int(&node->val.ptr, &result, 1);
+}
+
+void unop_negate(node_t *node){
+    node_val_t *val = &node->child->val;
+    if(val->type != TYPE_INT) {
+        eval_error(node, "Eval error: invalid operand type");
+        return;
+    }
+    node->val.type = TYPE_INT;
+    node->val.count = 1;
+    int neg = ~(*(int*)val->ptr);
+    new_int(&node->val.ptr, &neg, val->count);
 }
 
 /*
@@ -463,7 +507,7 @@ void sin_eval(node_t *node){
             break;
         }
         default:
-            eval_error(node, "Eval error: incorrect argument type");
+            eval_error(node, "Eval error: invalid argument type");
             return;
     }
     node->val.type = TYPE_FLT;
@@ -501,10 +545,14 @@ op_fun_t binop_eval[] = {
     [TK_MINUS] = binop_arithmetic,
     [TK_STAR] = binop_arithmetic,
     [TK_SLASH] = binop_arithmetic,
+    [TK_OR] = binop_bianry,
+    [TK_AND] = binop_bianry,
+    [TK_XOR] = binop_bianry,
 };
 
 op_fun_t unop_eval[] = {
     [TK_MINUS] = unop_negative,
+    [TK_NEG] = unop_negate,
 };
 
 /*

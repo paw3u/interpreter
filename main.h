@@ -11,13 +11,14 @@ typedef enum {
     TK_MINUS    = '-',
     TK_STAR     = '*',
     TK_SLASH    = '/',
-    TK_B_AND    = '&',
-    TK_B_OR     = '|',
-    TK_B_XOR    = '^',
-    TK_B_NEG    = '~',
+    TK_AND      = '&',
+    TK_OR       = '|',
+    TK_XOR      = '^',
+    TK_NEG      = '~',
     TK_LPAREN   = '(',
     TK_RPAREN   = ')',
     TK_EQ       = '=',
+    TK_TERN     = '?',
 } token_type_t;
 
 typedef struct {
