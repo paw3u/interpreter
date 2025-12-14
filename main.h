@@ -87,7 +87,7 @@ typedef node_t* (*infix_fun_t)(lexer_t *lex, node_t *node);
 typedef void (*op_fun_t)(node_t *node);
 
 typedef struct {
-    char *name;
+    const char *name;
     op_fun_t fun;
 } keyword_t;
 

@@ -207,7 +207,7 @@ node_t* node_val(lexer_t *lex) {
 */
 
 node_t* node_id(lexer_t *lex) {
-    for(size_t i; i < KEYWORDS_NUM; i++) {
+    for(size_t i = 0; i < KEYWORDS_NUM; i++) {
         if(!strncmp(keywords[i].name, lex->token.start, strlen(keywords[i].name))){
             if(keywords[i].fun) return node_call(lex, i);
         }
