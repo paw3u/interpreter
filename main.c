@@ -89,6 +89,8 @@ node_handler_t node_handler[] = {
     [TK_LPAREN] = { node_group, NULL,           0  },
     [TK_RPAREN] = { NULL,       NULL,           0  },
     [TK_EQ]     = { NULL,       node_assign,    1  },
+    [TK_QUEST]  = { NULL,       node_binop,     2  },
+    [TK_COL]    = { NULL,       node_binop,     3  },
     [TK_PLUS]   = { NULL,       node_binop,     10 },
     [TK_MINUS]  = { node_unop,  node_binop,     10 },
     [TK_STAR]   = { NULL,       node_binop,     20 },
@@ -490,6 +492,40 @@ void unop_negate(node_t *node){
 }
 
 /*
+*   Ewaluacja instrukcji warunkowej ternary
+*/
+
+void binop_tern_col(node_t *node) {
+    node_t *lhs = node->child;
+    node_t *rhs = node->child->next;
+    if(lhs->val.type == TYPE_NONE || rhs->val.type == TYPE_NONE) {
+        eval_error(node, "Eval error: incorrect argument");
+        return;
+    }
+}
+
+void binop_tern_quest(node_t *node) {
+    node_t *cond = node->child;
+    node_t *alts = node->child->next;
+    if(cond->val.type != TYPE_FLT && cond->val.type != TYPE_INT) {
+        eval_error(node, "Eval error: incorrect condition");
+        return;
+    }
+    if(alts->type != ND_BINOP || alts->op != TK_COL) {
+        eval_error(node, "Eval error: incorrect alternatives");
+        return;
+    }
+    if(*(int*)cond->val.ptr){
+        node->val = alts->child->val;
+        alts->child->val.ptr = NULL;
+    }
+    else{
+        node->val = alts->child->next->val;
+        alts->child->next->val.ptr = NULL;
+    }
+}
+
+/*
 *   Ewaluacja funkcji wbudowanych
 */
 
@@ -548,6 +584,8 @@ op_fun_t binop_eval[] = {
     [TK_OR] = binop_bianry,
     [TK_AND] = binop_bianry,
     [TK_XOR] = binop_bianry,
+    [TK_COL] = binop_tern_col,
+    [TK_QUEST] = binop_tern_quest,
 };
 
 op_fun_t unop_eval[] = {

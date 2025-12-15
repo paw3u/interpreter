@@ -18,7 +18,8 @@ typedef enum {
     TK_LPAREN   = '(',
     TK_RPAREN   = ')',
     TK_EQ       = '=',
-    TK_TERN     = '?',
+    TK_QUEST    = '?',
+    TK_COL      = ':',
 } token_type_t;
 
 typedef struct {
@@ -128,7 +129,8 @@ node_t* node_error(lexer_t *lex, char *msg);
 
 void binop_arithmetic(node_t *node);
 void unop_negative(node_t *node);
-
+void binop_tern_col(node_t *node);
+void binop_tern_quest(node_t *node);
 void sin_eval(node_t *node);
 void cos_eval(node_t *node);
 
