@@ -27,8 +27,8 @@ typedef struct {
     char *start;
     size_t len;
     union {
-        double num_flt;
-        int num_int;
+        double fnum;
+        int inum;
     };
 } token_t;
 
@@ -52,19 +52,44 @@ typedef enum {
     ND_ASSIGN,
 } node_type_t;
 
+
+
 typedef enum {
-    TYPE_NONE,
-    TYPE_FLT,
-    TYPE_INT,
-    TYPE_STR,
-    TYPE_FUN,
+    VT_NIL,
+    VT_FLT,
+    VT_INT,
+    VT_CHR,
+    VT_ARR,
 } val_type_t;
 
+#define type_nil (1 << VT_NIL)
+#define type_flt (1 << VT_FLT)
+#define type_int (1 << VT_INT)
+#define type_chr (1 << VT_CHR)
+#define type_arr (1 << VT_ARR)
+#define type_str (type_chr | type_arr)
+
+#define is_nil(t) (t & type_nil)
+#define is_flt(t) (t & type_flt)
+#define is_int(t) (t & type_int)
+#define is_chr(t) (t & type_chr)
+#define is_arr(t) (t & type_arr)
+#define is_str(t) ((t & type_arr) && (t & type_chr))
+#define is_num(t) ((t & type_flt) || (t & type_int))
+
 typedef struct {
-    val_type_t type;
     size_t count;
     void *ptr;
-} node_val_t;
+} arr_t;
+
+typedef struct {
+    int type;
+    union {
+        int inum;
+        double fnum;
+        arr_t arr;
+    };
+} val_t;
 
 typedef struct {
     char *name;
@@ -74,7 +99,7 @@ typedef struct {
 typedef struct node_t node_t;
 struct node_t {
     node_type_t type;
-    node_val_t val;
+    val_t val;
     int token_pos;
     node_t *child;
     node_t *next;
@@ -107,15 +132,12 @@ typedef struct {
 
 typedef struct {
     char *name;
-    node_val_t value;
+    val_t val;
 } var_tab_t;
 
 node_t* node_alloc(lexer_t *lex, node_type_t type);
 void node_free(node_t *node) ;
-
-void new_flt(void **dst, double *src, size_t count);
-void new_int(void **dst, int *src, size_t count);
-void new_str(void **dst, char *src, size_t count);
+void alloc_str(void **dst, char *src, size_t count);
 
 node_t* node_group(lexer_t *lex);
 node_t* node_val(lexer_t *lex);

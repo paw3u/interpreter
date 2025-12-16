@@ -25,18 +25,18 @@ void next_token(lexer_t *lex) {
     if(isdigit(c)) {
         if(c == '0' && *lex->pos == 'x' && isxdigit(*(lex->pos + 1))){
             lex->peek.type = TK_INT;
-            lex->peek.num_int = strtol(lex->peek.start, &lex->pos, 16);
+            lex->peek.inum = strtol(lex->peek.start, &lex->pos, 16);
             lex->peek.len = lex->pos - lex->peek.start;
             return;
         }
         while(isdigit(*lex->pos)) lex->pos++;
         if(*lex->pos != '.') {
             lex->peek.type = TK_INT;
-            lex->peek.num_int = strtol(lex->peek.start, NULL, 10);
+            lex->peek.inum = strtol(lex->peek.start, NULL, 10);
         }
         else {
             lex->peek.type = TK_FLT;
-            lex->peek.num_flt = strtod(lex->peek.start, &lex->pos);
+            lex->peek.fnum = strtod(lex->peek.start, &lex->pos);
         }
         lex->peek.len = lex->pos - lex->peek.start;
         return;
@@ -125,6 +125,7 @@ node_t* node_alloc(lexer_t *lex, node_type_t type) {
     node_t *node = (node_t*) calloc(1, sizeof(node_t));
     node->type = type;
     node->token_pos = lex->token.start - lex->source;
+    node->val.type = type_nil;
     return node;
 }
 
@@ -134,7 +135,7 @@ node_t* node_alloc(lexer_t *lex, node_type_t type) {
 
 void node_free(node_t *node) {
     while(node){
-        if(node->val.ptr) free(node->val.ptr);
+        if(node->type == ND_VAL && is_arr(node->val.type)) free(node->val.arr.ptr);
         if(node->type == ND_ID && node->id) free(node->id);
         node_t *next = node->next;
         node_free(node->child);
@@ -161,21 +162,7 @@ node_t* node_group(lexer_t *lex) {
 *   Funkcje pomocnicze do alokacji danych
 */
 
-void new_flt(void **dst, double *src, size_t count){
-    if(*dst) free(*dst);
-    *dst = malloc(count * sizeof(double));
-    if(!*dst) exit(ENOMEM);
-    memcpy(*dst, src, count * sizeof(double));
-}
-
-void new_int(void **dst, int *src, size_t count){
-    if(*dst) free(*dst);
-    *dst = malloc(count * sizeof(int));
-    if(!*dst) exit(ENOMEM);
-    memcpy(*dst, src, count * sizeof(int));
-}
-
-void new_str(void **dst, char *src, size_t count){
+void alloc_str(void **dst, char *src, size_t count){
     if(*dst) free(*dst);
     *dst = calloc(count + 1, sizeof(char));
     if(!*dst) exit(ENOMEM);
@@ -190,19 +177,17 @@ node_t* node_val(lexer_t *lex) {
     node_t *node = node_alloc(lex, ND_VAL);
     switch(lex->token.type){
         case TK_INT:
-            node->val.type = TYPE_INT;
-            node->val.count = 1;
-            new_int(&node->val.ptr, &lex->token.num_int, 1);
+            node->val.type = type_int;
+            node->val.inum = lex->token.inum;
             break;
         case TK_FLT:
-            node->val.type = TYPE_FLT;
-            node->val.count = 1;
-            new_flt(&node->val.ptr, &lex->token.num_flt, 1);
+            node->val.type = type_flt;
+            node->val.fnum = lex->token.fnum;
             break;
         case TK_STR:
-            node->val.type = TYPE_STR;
-            node->val.count = lex->token.len;
-            new_str(&node->val.ptr, lex->token.start, node->val.count);
+            node->val.type = type_str;
+            node->val.arr.count = lex->token.len;
+            alloc_str(&node->val.arr.ptr, lex->token.start, lex->token.len);
             break;
         default:
             return NULL;
@@ -344,14 +329,14 @@ void node_print(node_t *node, int indent) {
     switch(node->type) {
         case ND_VAL:
             switch(node->val.type){
-                case TYPE_FLT: 
-                    fprintf(stdout, "VAL %.2f\n", *(double*)node->val.ptr); 
+                case type_flt: 
+                    fprintf(stdout, "VAL %.2f\n", node->val.fnum); 
                     break;
-                case TYPE_INT: 
-                    fprintf(stdout, "VAL %d\n", *(int*)node->val.ptr); 
+                case type_int: 
+                    fprintf(stdout, "VAL %d\n", node->val.inum); 
                     break;
-                case TYPE_STR: 
-                    fprintf(stdout, "VAL '%s'\n", (char*)node->val.ptr); 
+                case type_str: 
+                    fprintf(stdout, "VAL '%s'\n", (char*)node->val.arr.ptr); 
                     break;
                 default:
                     break;
@@ -392,40 +377,34 @@ void binop_arithmetic(node_t *node) {
     node_t *lhs = node->child;
     node_t *rhs = node->child->next;
 
-    if((lhs->val.type != TYPE_FLT && lhs->val.type != TYPE_INT)
-    || (rhs->val.type != TYPE_FLT && rhs->val.type != TYPE_INT)) 
-        node->val.type = TYPE_NONE;
-    else
-        node->val.type = (lhs->val.type == TYPE_FLT || rhs->val.type == TYPE_FLT) ? TYPE_FLT : TYPE_INT;
-
-    node->val.count = 1;
+    if(!is_num(lhs->val.type) || !is_num(rhs->val.type)){
+        eval_error(node, "Eval error: invalid operand type");
+        return;
+    }
+    node->val.type = (is_flt(lhs->val.type) || is_flt(rhs->val.type)) ? type_flt : type_int;
 
     switch(node->val.type){
-        case TYPE_NONE: return;
-        case TYPE_FLT: {
-            double result = (lhs->val.type == TYPE_FLT) ? *(double*)lhs->val.ptr : *(int*)lhs->val.ptr;
-            double operand = (rhs->val.type == TYPE_FLT) ? *(double*)rhs->val.ptr : *(int*)rhs->val.ptr;
+        case type_flt: {
+            node->val.fnum = is_flt(lhs->val.type) ? lhs->val.fnum : lhs->val.inum;
+            double rhs_val = is_flt(rhs->val.type) ? rhs->val.fnum : rhs->val.inum;
             switch(node->op) {
-                case TK_PLUS: result += operand; break;
-                case TK_MINUS: result -= operand; break;
-                case TK_STAR: result *= operand; break;
-                case TK_SLASH: result /= operand; break;
+                case TK_PLUS: node->val.fnum += rhs_val; break;
+                case TK_MINUS: node->val.fnum -= rhs_val; break;
+                case TK_STAR: node->val.fnum *= rhs_val; break;
+                case TK_SLASH: node->val.fnum /= rhs_val; break;
                 default: break;
             }
-            new_flt(&node->val.ptr, &result, 1);
             return;
         }
-        case TYPE_INT: {
-            int result = *(int*)lhs->val.ptr;
-            int operand = *(int*)rhs->val.ptr;
+        case type_int: {
+            node->val.inum = lhs->val.inum;
             switch(node->op) {
-                case TK_PLUS: result += operand; break;
-                case TK_MINUS: result -= operand; break;
-                case TK_STAR: result *= operand; break;
-                case TK_SLASH: result /= operand; break;
+                case TK_PLUS: node->val.inum += rhs->val.inum; break;
+                case TK_MINUS: node->val.inum -= rhs->val.inum; break;
+                case TK_STAR: node->val.inum *= rhs->val.inum; break;
+                case TK_SLASH: node->val.inum /= rhs->val.inum; break;
                 default: break;
             }
-            new_int(&node->val.ptr, &result, 1);
             return;
         }
         default:
@@ -434,23 +413,16 @@ void binop_arithmetic(node_t *node) {
 }
 
 void unop_negative(node_t *node){
-    node_val_t *val = &node->child->val;
-    switch(val->type){
-        case TYPE_FLT: {
-            double neg = -(*(double*)val->ptr);
-            new_flt(&node->val.ptr, &neg, val->count);
+    switch(node->child->val.type){
+        case type_flt:
+            node->val.fnum = -node->child->val.fnum;
             break;
-        }
-        case TYPE_INT: {
-            int neg = -(*(int*)val->ptr);
-            new_int(&node->val.ptr, &neg, val->count);
+        case type_int:
+            node->val.inum = -node->child->val.inum;
             break;
-        }
-        default:
-            return;
+        default: return;
     }
-    node->val.type = val->type;
-    node->val.count = 1;
+    node->val.type = node->child->val.type;
 }
 
 /*
@@ -461,34 +433,28 @@ void binop_bianry(node_t *node) {
     node_t *lhs = node->child;
     node_t *rhs = node->child->next;
 
-    if(lhs->val.type != TYPE_INT || rhs->val.type != TYPE_INT) {
+    if(!is_int(lhs->val.type) || !is_int(rhs->val.type)) {
         eval_error(node, "Eval error: invalid operand type");
         return;
     }
     
-    node->val.type = TYPE_INT;
-    node->val.count = 1;
-    int result = *(int*)lhs->val.ptr;
-    int operand = *(int*)rhs->val.ptr;
+    node->val.type = type_int;
+    node->val.inum = lhs->val.inum;
     switch(node->op) {
-        case TK_OR: result |= operand; break;
-        case TK_AND: result &= operand; break;
-        case TK_XOR: result ^= operand; break;
-        default: break;
+        case TK_OR: node->val.inum  |= rhs->val.inum; return;
+        case TK_AND: node->val.inum  &= rhs->val.inum; return;
+        case TK_XOR: node->val.inum  ^= rhs->val.inum; return;
+        default: return;
     }
-    new_int(&node->val.ptr, &result, 1);
 }
 
 void unop_negate(node_t *node){
-    node_val_t *val = &node->child->val;
-    if(val->type != TYPE_INT) {
+    if(!is_int(node->child->val.type)) {
         eval_error(node, "Eval error: invalid operand type");
         return;
     }
-    node->val.type = TYPE_INT;
-    node->val.count = 1;
-    int neg = ~(*(int*)val->ptr);
-    new_int(&node->val.ptr, &neg, val->count);
+    node->val.type = type_int;
+    node->val.inum = ~node->child->val.inum;
 }
 
 /*
@@ -498,7 +464,7 @@ void unop_negate(node_t *node){
 void binop_tern_col(node_t *node) {
     node_t *lhs = node->child;
     node_t *rhs = node->child->next;
-    if(lhs->val.type == TYPE_NONE || rhs->val.type == TYPE_NONE) {
+    if(is_nil(lhs->val.type) || is_nil(rhs->val.type)) {
         eval_error(node, "Eval error: incorrect argument");
         return;
     }
@@ -507,7 +473,7 @@ void binop_tern_col(node_t *node) {
 void binop_tern_quest(node_t *node) {
     node_t *cond = node->child;
     node_t *alts = node->child->next;
-    if(cond->val.type != TYPE_FLT && cond->val.type != TYPE_INT) {
+    if(!is_num(cond->val.type)) {
         eval_error(node, "Eval error: incorrect condition");
         return;
     }
@@ -515,13 +481,17 @@ void binop_tern_quest(node_t *node) {
         eval_error(node, "Eval error: incorrect alternatives");
         return;
     }
-    if(*(int*)cond->val.ptr){
+    if(cond->val.inum || cond->val.fnum){
         node->val = alts->child->val;
-        alts->child->val.ptr = NULL;
+        if(is_arr(alts->child->val.type)){
+            alts->child->val.arr.ptr = NULL;
+        }
     }
     else{
         node->val = alts->child->next->val;
-        alts->child->next->val.ptr = NULL;
+        if(is_arr(alts->child->next->val.type)){
+            alts->child->next->val.arr.ptr = NULL;
+        }
     }
 }
 
@@ -530,45 +500,23 @@ void binop_tern_quest(node_t *node) {
 */
 
 void sin_eval(node_t *node){
-    node_val_t *val = &node->child->val;
-    switch(val->type){
-        case TYPE_FLT: {
-            double arg = sin(*(double*)val->ptr);
-            new_flt(&node->val.ptr, &arg, val->count);
-            break;
-        }
-        case TYPE_INT: {
-            double arg = sin(*(int*)val->ptr);
-            new_flt(&node->val.ptr, &arg, val->count);
-            break;
-        }
-        default:
-            eval_error(node, "Eval error: invalid argument type");
-            return;
+    val_t *val = &node->child->val;
+    if(!is_num(val->type)){
+        eval_error(node, "Eval error: invalid argument type");
+        return;
     }
-    node->val.type = TYPE_FLT;
-    node->val.count = 1;
+    node->val.type = type_flt;
+    node->val.fnum = sin(is_flt(val->type) ? val->fnum : val->inum);
 }
 
 void cos_eval(node_t *node){
-    node_val_t *val = &node->child->val;
-    switch(val->type){
-        case TYPE_FLT: {
-            double arg = cos(*(double*)val->ptr);
-            new_flt(&node->val.ptr, &arg, val->count);
-            break;
-        }
-        case TYPE_INT: {
-            double arg = cos(*(int*)val->ptr);
-            new_flt(&node->val.ptr, &arg, val->count);
-            break;
-        }
-        default:
-            eval_error(node, "Eval error: incorrect argument type");
-            return;
+    val_t *val = &node->child->val;
+    if(!is_num(val->type)){
+        eval_error(node, "Eval error: invalid argument type");
+        return;
     }
-    node->val.type = TYPE_FLT;
-    node->val.count = 1;
+    node->val.type = type_flt;
+    node->val.fnum = cos(is_flt(val->type) ? val->fnum : val->inum);
 }
 
 
@@ -633,27 +581,19 @@ void set_var(node_t *node, var_tab_t *vars) {
         }
     }
     node_eval(right);
-    if(right->val.type == TYPE_NONE) return;
-    switch(right->val.type){
-        case TYPE_FLT:
-            new_flt(&vars[index].value.ptr, right->val.ptr, right->val.count);
-            break;
-        case TYPE_INT: 
-            new_int(&vars[index].value.ptr, right->val.ptr, right->val.count);
-            break;
-        case TYPE_STR:
-            new_str(&vars[index].value.ptr, right->val.ptr, right->val.count);
-            break;
-        default:
-            eval_error(node, "Unsupported variable type");
-            return;
-    }
-    vars[index].value.count = right->val.count;
-    vars[index].value.type = right->val.type;
+    if(is_nil(right->val.type)) return;
+
     if(!vars[index].name) {
         vars[index].name = (char*) calloc(left->id->len + 1, sizeof(char));
         memcpy(vars[index].name, left->id->name, left->id->len);
     }
+
+    if(is_str(right->val.type)){
+        alloc_str(&vars[index].val.arr.ptr, right->val.arr.ptr, right->val.arr.count);
+        return;
+    }
+
+    vars[index].val = right->val;
 }
 
 void get_var(node_t *node, var_tab_t *vars){
@@ -669,25 +609,9 @@ void get_var(node_t *node, var_tab_t *vars){
     }
     if(!vars[index].name || overflow){
         eval_error(node, "Unknown identifier:");
-        node->val.type = TYPE_NONE;
         return;
     }
-    node->val.count = vars[index].value.count;
-    node->val.type = vars[index].value.type;
-    switch(node->val.type){
-        case TYPE_FLT:
-            new_flt(&node->val.ptr, vars[index].value.ptr, node->val.count);
-            break;
-        case TYPE_INT:
-            new_int(&node->val.ptr, vars[index].value.ptr, node->val.count);
-            break;
-        case TYPE_STR:
-            new_str(&node->val.ptr, vars[index].value.ptr, node->val.count);
-            break;
-        default:
-            eval_error(node, "Unsupported variable type");
-            return;
-    }
+    node->val = vars[index].val;
 }
 
 /*
@@ -695,7 +619,7 @@ void get_var(node_t *node, var_tab_t *vars){
 */
 
 void node_eval(node_t *node){
-    if(!node || node->val.ptr) return;
+    if(!node) return;
     switch(node->type) {
         case ND_VAL:
             return;
@@ -730,35 +654,45 @@ void node_eval(node_t *node){
 #define BUFSIZE 256
 
 int main(int argc, char *argv[]) { 
-    
     char buffer[BUFSIZE];
+    FILE *file = stdin;
 
-    fprintf(stdout, ">> ");
-    while(fgets(buffer, BUFSIZE, stdin) != NULL){
+    if(argc > 1) {
+        file = fopen(argv[1], "r");
+        if(!file) {
+            fprintf(stderr, "Unable to open file \"%s\"\n", argv[1]);
+            exit(EIO);
+        }
+    }
+    
+
+    if(file == stdin) fprintf(stdout, ">> ");
+    while(fgets(buffer, BUFSIZE, file) != NULL){
         if(strncmp(buffer, "exit", 4) == 0) break;
         node_t *root = parse(buffer);
         if(root){
-            //node_print(root, 0);
+            node_print(root, 0);
             node_eval(root);
             switch(root->val.type){
-                case TYPE_NONE:
+                case type_nil:
                     break;
-                case TYPE_FLT:
-                    fprintf(stdout, "%g\n", *(double*)root->val.ptr);
+                case type_flt:
+                    fprintf(stdout, "%g\n", root->val.fnum);
                     break;
-                case TYPE_INT:
-                    fprintf(stdout, "%d\n", *(int*)root->val.ptr);
+                case type_int:
+                    fprintf(stdout, "%d\n", root->val.inum);
                     break;
-                case TYPE_STR:
-                    fprintf(stdout, "'%s'\n", (char*)root->val.ptr);
+                case type_str:
+                    fprintf(stdout, "'%s'\n", (char*)root->val.arr.ptr);
                     break;
                 default:
                     break;
             }
             node_free(root);
         }
-        fprintf(stdout, ">> ");
+        if(file == stdin) fprintf(stdout, ">> ");
     }
+    if(file != stdin) fclose(file);
 
     return 0;
 }
