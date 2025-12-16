@@ -1,6 +1,8 @@
 #ifndef MAIN_H
 #define MAIN_H
 
+#include <stdint.h>
+
 typedef enum {
     TK_EOF = 0,
     TK_FLT,
@@ -28,7 +30,7 @@ typedef struct {
     size_t len;
     union {
         double fnum;
-        int inum;
+        int64_t inum;
     };
 } token_t;
 
@@ -37,7 +39,7 @@ typedef struct {
     char *pos;
     token_t token;
     token_t peek;
-    int error;
+    uint8_t error;
 } lexer_t;
 
 void next_token(lexer_t *lex);
@@ -69,6 +71,8 @@ typedef enum {
 #define type_arr (1 << VT_ARR)
 #define type_str (type_chr | type_arr)
 
+#define type_size(t) (is_num(t) ? 8 : is_char(t) ? 1 : 0)
+
 #define is_nil(t) (t & type_nil)
 #define is_flt(t) (t & type_flt)
 #define is_int(t) (t & type_int)
@@ -83,9 +87,9 @@ typedef struct {
 } arr_t;
 
 typedef struct {
-    int type;
+    uint32_t type;
     union {
-        int inum;
+        int64_t inum;
         double fnum;
         arr_t arr;
     };
@@ -100,7 +104,7 @@ typedef struct node_t node_t;
 struct node_t {
     node_type_t type;
     val_t val;
-    int token_pos;
+    size_t token_pos;
     node_t *child;
     node_t *next;
     union {
@@ -127,7 +131,7 @@ typedef enum {
 typedef struct {
     prefix_fun_t prefix;
     infix_fun_t infix;
-    int lbp;
+    uint8_t lbp;
 } node_handler_t;
 
 typedef struct {
@@ -144,10 +148,11 @@ node_t* node_val(lexer_t *lex);
 node_t* node_id(lexer_t *lex);
 node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
-node_t* node_call(lexer_t *lex, int kw);
+node_t* node_call(lexer_t *lex, uint8_t kw);
 node_t* node_assign(lexer_t *lex, node_t *left);
-node_t* node_expr(lexer_t *lex, int rbp);
+node_t* node_expr(lexer_t *lex, uint8_t rbp);
 node_t* node_error(lexer_t *lex, char *msg);
+uint32_t hash(const char *str, size_t len, uint32_t seed);
 
 void binop_arithmetic(node_t *node);
 void unop_negative(node_t *node);

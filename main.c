@@ -4,6 +4,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include "main.h"
 
 /*
@@ -247,7 +248,7 @@ node_t* node_unop(lexer_t *lex) {
 *   Węzeł wywołania funkcji
 */
 
-node_t* node_call(lexer_t *lex, int kw) {
+node_t* node_call(lexer_t *lex, uint8_t kw) {
     next_token(lex);
     if(lex->token.type != TK_LPAREN){
         return node_error(lex, "Syntax error: ( missing");
@@ -281,7 +282,7 @@ node_t* node_assign(lexer_t *lex, node_t *left) {
 *   Główna funkcja rekurencyjnego parsowania wyrażenia
 */
 
-node_t* node_expr(lexer_t *lex, int rbp) {
+node_t* node_expr(lexer_t *lex, uint8_t rbp) {
     next_token(lex);
     prefix_fun_t prefix = node_handler[lex->token.type].prefix;
     node_t *node = prefix ? prefix(lex) : NULL;
@@ -333,7 +334,7 @@ void node_print(node_t *node, int indent) {
                     fprintf(stdout, "VAL %.2f\n", node->val.fnum); 
                     break;
                 case type_int: 
-                    fprintf(stdout, "VAL %d\n", node->val.inum); 
+                    fprintf(stdout, "VAL %lld\n", node->val.inum); 
                     break;
                 case type_str: 
                     fprintf(stdout, "VAL '%s'\n", (char*)node->val.arr.ptr); 
@@ -547,20 +548,20 @@ op_fun_t unop_eval[] = {
 
 void eval_error(node_t *node, char *msg){
     if(node->type == ND_ID){
-        fprintf(stderr, "%s %.*s [%d]\n", msg, (int)node->id->len, node->id->name, node->token_pos);
+        fprintf(stderr, "%s %.*s [%llu]\n", msg, (int)node->id->len, node->id->name, node->token_pos);
         return;
     }
-    fprintf(stderr, "%s [%d]\n", msg, node->token_pos);
+    fprintf(stderr, "%s [%llu]\n", msg, node->token_pos);
 }
 
 /*
 *   Funkcja hashująca ukradziona z Lua
 */
 
-unsigned int hash(const char *str, size_t len, unsigned int seed) {
-    unsigned int h = seed ^ (unsigned int)(len);
+uint32_t hash(const char *str, size_t len, uint32_t seed) {
+    uint32_t h = seed ^ (uint32_t)(len);
     for(; len > 0; len--)
-        h ^= ((h << 5) + (h >> 2) + (unsigned char)(str[len - 1]));
+        h ^= ((h << 5) + (h >> 2) + (uint8_t)(str[len - 1]));
     return h;
 }
 
@@ -599,7 +600,7 @@ void set_var(node_t *node, var_tab_t *vars) {
 void get_var(node_t *node, var_tab_t *vars){
     size_t index = hash(node->id->name, node->id->len, (intptr_t)vars) & (VARTAB_SIZE - 1);
     size_t start = index;
-    int overflow = 0;
+    uint8_t overflow = 0;
     while(vars[index].name && strncmp(vars[index].name, node->id->name, node->id->len)){
         index = (index + 1) & (VARTAB_SIZE - 1);
         if(index == start){
@@ -647,6 +648,147 @@ void node_eval(node_t *node){
     }
 }
 
+void node_echo(node_t *node){
+    switch(node->val.type){
+        case type_nil:
+            return;
+        case type_flt:
+            fprintf(stdout, "%g\n", node->val.fnum);
+            return;
+        case type_int:
+            fprintf(stdout, "%lld\n", node->val.inum);
+            return;
+        case type_str:
+            fprintf(stdout, "'%s'\n", (char*)node->val.arr.ptr);
+            return;
+        default:
+            return;
+    }
+}
+
+/**
+ ** Kompilator
+ **/
+
+typedef struct {
+    size_t size;
+    size_t capacity;
+    uint8_t *data;
+} dbuffer_t;
+
+dbuffer_t db_create() {
+    return (dbuffer_t){ .capacity = 4096, .data = malloc(4096) };
+}
+
+void db_write(dbuffer_t *db, const void *src, size_t len) {
+    if(db->size + len > db->capacity) {
+        size_t new_cap = db->capacity;
+        while (db->size + len > new_cap) new_cap *= 2;
+        db->data = realloc(db->data, new_cap);
+        db->capacity = new_cap;
+    }
+    memcpy(db->data + db->size, src, len);
+    db->size += len;
+}
+
+void db_free(dbuffer_t *db){
+    if(db->data) free(db->data);
+}
+
+#define db_write_u32(db, val) do { uint32_t _v = (val); db_write(db, &_v, 4); } while(0)
+#define db_write_u16(db, val) do { uint16_t _v = (val); db_write(db, &_v, 2); } while(0)
+#define db_write_u8 (db, val) do { uint8_t  _v = (val); db_write(db, &_v, 1); } while(0)
+
+/*
+typedef enum {
+    OP_LOAD,
+    OP_PUSH,
+    OP_POP,
+    OP_ADD,
+    OP_SUB,
+    OP_MULT,
+    OP_DIV,
+    //OP_MOVE,
+    //OP_LOAD,
+    //OP_ADD,
+    //OP_SUB,
+    //OP_MULT,
+    //OP_DIV,
+    //OP_MOD,
+    //OP_NEG,
+    //OP_BAND,
+    //OP_BOR,
+    //OP_BXOR,
+    //OP_BNOT,
+    //OP_LSH,
+    //OP_RSH,
+    //OP_NOT,
+    //OP_JMP,
+    //OP_LT,
+    //OP_LE, 
+    //OP_TEST,
+} opcodes_t;
+
+void node_val_compile(node_t *node, dbuffer_t *data_buf, dbuffer_t *code_buf){
+    size_t data_pos = data_buf->size;
+    db_write(data_buf, node->val.type, sizeof(uint32_t));
+    size_t len = type_size(node->val.type);
+    switch(node->val.type){
+        case type_int:
+            db_write(data_buf, &node->val.inum, len);
+            break;
+        case type_flt:
+            db_write(data_buf, &node->val.fnum, len);
+            break;
+        case type_arr:
+            db_write(data_buf, node->val.arr.ptr, len);
+            break;
+    }
+    uint32_t cmd;
+}
+
+void node_compile(node_t *node, dbuffer_t *data_buf, dbuffer_t *code_buf){
+    if(!node) return;
+    switch(node->type) {
+        case ND_VAL:
+            return;
+        case ND_ID:
+            get_var(node, var_tab);
+            return;
+        case ND_BINOP:
+            node_eval(node->child);
+            node_eval(node->child->next);
+            binop_eval[node->op](node);
+            return;
+        case ND_UNOP:
+            node_eval(node->child);
+            unop_eval[node->op](node);
+            return;
+        case ND_ASSIGN:
+            set_var(node, var_tab);
+            return;
+        case ND_CALL:
+            node_eval(node->child);
+            keywords[node->op].fun(node);
+            return;
+        default:
+            return;
+    }
+}
+
+void compile(node_t *node){
+    dbuffer_t data_buf = db_create();
+    dbuffer_t code_buf = db_create();
+
+    node_compile(node, &data_buf, &code_buf);
+
+    db_free(&data_buf);
+    db_free(&code_buf);
+}
+
+*/
+
+
 /*
 *   Main
 */
@@ -664,8 +806,9 @@ int main(int argc, char *argv[]) {
             exit(EIO);
         }
     }
-    
 
+
+    
     if(file == stdin) fprintf(stdout, ">> ");
     while(fgets(buffer, BUFSIZE, file) != NULL){
         if(strncmp(buffer, "exit", 4) == 0) break;
@@ -673,21 +816,7 @@ int main(int argc, char *argv[]) {
         if(root){
             node_print(root, 0);
             node_eval(root);
-            switch(root->val.type){
-                case type_nil:
-                    break;
-                case type_flt:
-                    fprintf(stdout, "%g\n", root->val.fnum);
-                    break;
-                case type_int:
-                    fprintf(stdout, "%d\n", root->val.inum);
-                    break;
-                case type_str:
-                    fprintf(stdout, "'%s'\n", (char*)root->val.arr.ptr);
-                    break;
-                default:
-                    break;
-            }
+            node_echo(root);
             node_free(root);
         }
         if(file == stdin) fprintf(stdout, ">> ");
