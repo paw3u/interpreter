@@ -4,6 +4,53 @@
 #include <stdint.h>
 
 typedef enum {
+    OP_LOAD_INT,
+    OP_LOAD_FLT,
+    OP_PUSH,
+    OP_POP,
+    OP_ADD_II,
+    OP_ADD_IF,
+    OP_ADD_FI,
+    OP_ADD_FF,
+    OP_SUB_II,
+    OP_SUB_IF,
+    OP_SUB_FI,
+    OP_SUB_FF,
+    OP_MULT,
+    OP_DIV,
+    OP_HALT,
+} opcode_t;
+
+typedef struct {
+    uint32_t opcode;
+    uint32_t arg;
+} instruct_t;
+
+typedef struct {
+    size_t size;
+    size_t capacity;
+    instruct_t *inst;
+} ibuffer_t;
+
+ibuffer_t ib_create();
+void ib_write(ibuffer_t *ib, instruct_t inst);
+void ib_free(ibuffer_t *db);
+
+typedef struct {
+    size_t size;
+    size_t capacity;
+    uint8_t *data;
+} dbuffer_t;
+
+dbuffer_t db_create();
+void db_write(dbuffer_t *db, const void *src, size_t len);
+void db_free(dbuffer_t *db);
+
+#define db_write_u32(db, val) do { uint32_t _v = (val); db_write(db, &_v, 4); } while(0)
+#define db_write_u16(db, val) do { uint16_t _v = (val); db_write(db, &_v, 2); } while(0)
+#define db_write_u8(db, val) do { uint8_t  _v = (val); db_write(db, &_v, 1); } while(0)
+
+typedef enum {
     TK_EOF = 0,
     TK_FLT,
     TK_INT,
@@ -40,10 +87,11 @@ typedef struct {
     token_t token;
     token_t peek;
     uint8_t error;
+    dbuffer_t *data;
 } lexer_t;
 
 void next_token(lexer_t *lex);
-lexer_t lexer(char *str);
+lexer_t lexer(char *str, dbuffer_t *data);
 
 typedef enum {
     ND_BINOP,
@@ -53,8 +101,6 @@ typedef enum {
     ND_CALL,
     ND_ASSIGN,
 } node_type_t;
-
-
 
 typedef enum {
     VT_NIL,
@@ -71,8 +117,6 @@ typedef enum {
 #define type_arr (1 << VT_ARR)
 #define type_str (type_chr | type_arr)
 
-#define type_size(t) (is_num(t) ? 8 : is_char(t) ? 1 : 0)
-
 #define is_nil(t) (t & type_nil)
 #define is_flt(t) (t & type_flt)
 #define is_int(t) (t & type_int)
@@ -81,19 +125,34 @@ typedef enum {
 #define is_str(t) ((t & type_arr) && (t & type_chr))
 #define is_num(t) ((t & type_flt) || (t & type_int))
 
-typedef struct {
-    size_t count;
-    void *ptr;
-} arr_t;
+#define type_size(t) (is_num(t) ? 8 : is_chr(t) ? 1 : 0)
 
+/*
+ *  W trakcie parsowania stałych w drzewie zapisywane są typ
+ *  i adres w buforze danych, natomiast do bufora zapisywana
+ *  jest wartość pod odpowiednim adresem.
+ *  W OP_LOAD podawany jest adres z węzła i przy wykonywaniu
+ *  kodu pobierana jest wartość z bufora.
+ *  Do ustalenia jak to ma działać dla danych tablicowych...
+ */
+
+// Typ przechowywany na stosie - do wykonywania kodu
 typedef struct {
     uint32_t type;
+    uint32_t size;
     union {
         int64_t inum;
         double fnum;
-        arr_t arr;
+        void *addr;
     };
 } val_t;
+
+// Typ przechowywany w węźle
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    uint32_t addr;
+} val_info_t;
 
 typedef struct {
     char *name;
@@ -103,7 +162,8 @@ typedef struct {
 typedef struct node_t node_t;
 struct node_t {
     node_type_t type;
-    val_t val;
+    val_info_t val;
+    val_t nval; // Tylko testowo do ewaluacji drzewa
     size_t token_pos;
     node_t *child;
     node_t *next;
@@ -116,6 +176,7 @@ struct node_t {
 typedef node_t* (*prefix_fun_t)(lexer_t *lex);
 typedef node_t* (*infix_fun_t)(lexer_t *lex, node_t *node);
 typedef void (*op_fun_t)(node_t *node);
+typedef void (*comp_fun_t)(node_t *node, ibuffer_t *ib);
 
 typedef struct {
     const char *name;
@@ -136,6 +197,7 @@ typedef struct {
 
 typedef struct {
     char *name;
+    uint32_t type;
     val_t val;
 } var_tab_t;
 
@@ -153,6 +215,7 @@ node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, uint8_t rbp);
 node_t* node_error(lexer_t *lex, char *msg);
 uint32_t hash(const char *str, size_t len, uint32_t seed);
+void node_print(node_t *node, dbuffer_t *db, int indent);
 
 void binop_arithmetic(node_t *node);
 void unop_negative(node_t *node);
@@ -161,12 +224,16 @@ void binop_tern_quest(node_t *node);
 void sin_eval(node_t *node);
 void cos_eval(node_t *node);
 
+void node_val_compile(node_t *node, ibuffer_t *ib);
+void comp_binop_arithmetic(node_t *node, ibuffer_t *ib);
+void node_compile(node_t *node, ibuffer_t *ib);
+
 void set_var(node_t *node, var_tab_t *vars);
 void get_var(node_t *node, var_tab_t *vars);
 void node_eval(node_t *node);
 
 void eval_error(node_t *node, char *msg);
 
-node_t* parse(char *expr);
+node_t* parse(char *expr, dbuffer_t *data);
 
 #endif

@@ -69,11 +69,12 @@ void next_token(lexer_t *lex) {
 *   Tworzenie Lexera
 */
 
-lexer_t lexer(char *str) {
+lexer_t lexer(char *str, dbuffer_t *data) {
     lexer_t lex;
     lex.source = str;
     lex.pos = lex.source;
     lex.error = 0;
+    lex.data = data;
     next_token(&lex);
     return lex;
 }
@@ -136,7 +137,6 @@ node_t* node_alloc(lexer_t *lex, node_type_t type) {
 
 void node_free(node_t *node) {
     while(node){
-        if(node->type == ND_VAL && is_arr(node->val.type)) free(node->val.arr.ptr);
         if(node->type == ND_ID && node->id) free(node->id);
         node_t *next = node->next;
         node_free(node->child);
@@ -179,16 +179,24 @@ node_t* node_val(lexer_t *lex) {
     switch(lex->token.type){
         case TK_INT:
             node->val.type = type_int;
-            node->val.inum = lex->token.inum;
+            node->val.size = sizeof(uint64_t);
+            node->val.addr = lex->data->size;
+            db_write(lex->data, &lex->token.inum, sizeof(uint64_t));
+            node->nval.inum = lex->token.inum;
             break;
         case TK_FLT:
             node->val.type = type_flt;
-            node->val.fnum = lex->token.fnum;
+            node->val.size = sizeof(double);
+            node->val.addr = lex->data->size;
+            db_write(lex->data, &lex->token.fnum, sizeof(double));
+            node->nval.fnum = lex->token.fnum;
             break;
         case TK_STR:
             node->val.type = type_str;
-            node->val.arr.count = lex->token.len;
-            alloc_str(&node->val.arr.ptr, lex->token.start, lex->token.len);
+            node->val.size = lex->token.len + 1;
+            node->val.addr = lex->data->size;
+            db_write(lex->data, lex->token.start, lex->token.len);
+            db_write_u8(lex->data, 0);
             break;
         default:
             return NULL;
@@ -309,11 +317,11 @@ node_t* node_error(lexer_t *lex, char *msg){
 *   Wywołanie parsera
 */
 
-node_t* parse(char *expr) {
-    lexer_t lex = lexer(expr);
+node_t* parse(char *expr, dbuffer_t *data) {
+    lexer_t lex = lexer(expr, data);
     if(lex.peek.type == TK_EOF) return NULL;
     node_t *root = node_expr(&lex, 0);
-    if(lex.peek.type != TK_EOF){
+    if(lex.peek.type != TK_EOF) {
         next_token(&lex);
         return node_error(&lex, "Syntax error: unexpected expression");
     }
@@ -324,20 +332,20 @@ node_t* parse(char *expr) {
 *   Wydruk drzewa
 */
 
-void node_print(node_t *node, int indent) {
+void node_print(node_t *node, dbuffer_t *db, int indent) {
     if(!node) return;
     for(int i = 0; i < indent; i++) fprintf(stdout, "  ");
     switch(node->type) {
         case ND_VAL:
-            switch(node->val.type){
+            switch(node->val.type) {
                 case type_flt: 
-                    fprintf(stdout, "VAL %.2f\n", node->val.fnum); 
+                    fprintf(stdout, "VAL %.2f\n", *(double*)(db->data + node->val.addr)); 
                     break;
                 case type_int: 
-                    fprintf(stdout, "VAL %lld\n", node->val.inum); 
+                    fprintf(stdout, "VAL %lld\n", *(int64_t*)(db->data + node->val.addr)); 
                     break;
-                case type_str: 
-                    fprintf(stdout, "VAL '%s'\n", (char*)node->val.arr.ptr); 
+                case type_str:
+                    fprintf(stdout, "VAL '%s'\n", (char*)(db->data + node->val.addr)); 
                     break;
                 default:
                     break;
@@ -349,19 +357,19 @@ void node_print(node_t *node, int indent) {
         case ND_BINOP:
         case ND_ASSIGN:
             fprintf(stdout, "BINOP %c\n", node->op);
-            node_print(node->child, indent + 1);
-            node_print(node->child->next, indent + 1);
+            node_print(node->child, db, indent + 1);
+            node_print(node->child->next, db, indent + 1);
             break;
         case ND_UNOP:
             fprintf(stdout, "UNOP %c\n", node->op);
-            node_print(node->child, indent + 1);
+            node_print(node->child, db, indent + 1);
             break;
         case ND_CALL:
             fprintf(stdout, "CALL %s\n", keywords[node->op].name);
-            node_print(node->child, indent + 1);
+            node_print(node->child, db, indent + 1);
             node_t *next = node->child->next;
-            while(next){
-                node_print(next, indent + 1);
+            while(next) {
+                node_print(next, db, indent + 1);
                 next = next->next;
             }
             break;
@@ -386,24 +394,24 @@ void binop_arithmetic(node_t *node) {
 
     switch(node->val.type){
         case type_flt: {
-            node->val.fnum = is_flt(lhs->val.type) ? lhs->val.fnum : lhs->val.inum;
-            double rhs_val = is_flt(rhs->val.type) ? rhs->val.fnum : rhs->val.inum;
+            node->nval.fnum = is_flt(lhs->val.type) ? lhs->nval.fnum : lhs->nval.inum;
+            double rhs_val = is_flt(rhs->val.type) ? rhs->nval.fnum : rhs->nval.inum;
             switch(node->op) {
-                case TK_PLUS: node->val.fnum += rhs_val; break;
-                case TK_MINUS: node->val.fnum -= rhs_val; break;
-                case TK_STAR: node->val.fnum *= rhs_val; break;
-                case TK_SLASH: node->val.fnum /= rhs_val; break;
+                case TK_PLUS: node->nval.fnum += rhs_val; break;
+                case TK_MINUS: node->nval.fnum -= rhs_val; break;
+                case TK_STAR: node->nval.fnum *= rhs_val; break;
+                case TK_SLASH: node->nval.fnum /= rhs_val; break;
                 default: break;
             }
             return;
         }
         case type_int: {
-            node->val.inum = lhs->val.inum;
+            node->nval.inum = lhs->nval.inum;
             switch(node->op) {
-                case TK_PLUS: node->val.inum += rhs->val.inum; break;
-                case TK_MINUS: node->val.inum -= rhs->val.inum; break;
-                case TK_STAR: node->val.inum *= rhs->val.inum; break;
-                case TK_SLASH: node->val.inum /= rhs->val.inum; break;
+                case TK_PLUS: node->nval.inum += rhs->nval.inum; break;
+                case TK_MINUS: node->nval.inum -= rhs->nval.inum; break;
+                case TK_STAR: node->nval.inum *= rhs->nval.inum; break;
+                case TK_SLASH: node->nval.inum /= rhs->nval.inum; break;
                 default: break;
             }
             return;
@@ -416,10 +424,10 @@ void binop_arithmetic(node_t *node) {
 void unop_negative(node_t *node){
     switch(node->child->val.type){
         case type_flt:
-            node->val.fnum = -node->child->val.fnum;
+            node->nval.fnum = -node->child->nval.fnum;
             break;
         case type_int:
-            node->val.inum = -node->child->val.inum;
+            node->nval.inum = -node->child->nval.inum;
             break;
         default: return;
     }
@@ -440,11 +448,11 @@ void binop_bianry(node_t *node) {
     }
     
     node->val.type = type_int;
-    node->val.inum = lhs->val.inum;
+    node->nval.inum = lhs->nval.inum;
     switch(node->op) {
-        case TK_OR: node->val.inum  |= rhs->val.inum; return;
-        case TK_AND: node->val.inum  &= rhs->val.inum; return;
-        case TK_XOR: node->val.inum  ^= rhs->val.inum; return;
+        case TK_OR: node->nval.inum  |= rhs->nval.inum; return;
+        case TK_AND: node->nval.inum  &= rhs->nval.inum; return;
+        case TK_XOR: node->nval.inum  ^= rhs->nval.inum; return;
         default: return;
     }
 }
@@ -455,7 +463,7 @@ void unop_negate(node_t *node){
         return;
     }
     node->val.type = type_int;
-    node->val.inum = ~node->child->val.inum;
+    node->nval.inum = ~node->child->nval.inum;
 }
 
 /*
@@ -482,17 +490,11 @@ void binop_tern_quest(node_t *node) {
         eval_error(node, "Eval error: incorrect alternatives");
         return;
     }
-    if(cond->val.inum || cond->val.fnum){
+    if(cond->nval.inum || cond->nval.fnum) {
         node->val = alts->child->val;
-        if(is_arr(alts->child->val.type)){
-            alts->child->val.arr.ptr = NULL;
-        }
     }
-    else{
+    else {
         node->val = alts->child->next->val;
-        if(is_arr(alts->child->next->val.type)){
-            alts->child->next->val.arr.ptr = NULL;
-        }
     }
 }
 
@@ -500,24 +502,26 @@ void binop_tern_quest(node_t *node) {
 *   Ewaluacja funkcji wbudowanych
 */
 
-void sin_eval(node_t *node){
-    val_t *val = &node->child->val;
-    if(!is_num(val->type)){
+void sin_eval(node_t *node) {
+    val_info_t *val = &node->child->val;
+    val_t *nval = &node->child->nval;
+    if(!is_num(val->type)) {
         eval_error(node, "Eval error: invalid argument type");
         return;
     }
     node->val.type = type_flt;
-    node->val.fnum = sin(is_flt(val->type) ? val->fnum : val->inum);
+    node->nval.fnum = sin(is_flt(val->type) ? nval->fnum : nval->inum);
 }
 
-void cos_eval(node_t *node){
-    val_t *val = &node->child->val;
-    if(!is_num(val->type)){
+void cos_eval(node_t *node) {
+    val_info_t *val = &node->child->val;
+    val_t *nval = &node->child->nval;
+    if(!is_num(val->type)) {
         eval_error(node, "Eval error: invalid argument type");
         return;
     }
     node->val.type = type_flt;
-    node->val.fnum = cos(is_flt(val->type) ? val->fnum : val->inum);
+    node->nval.fnum = cos(is_flt(val->type) ? nval->fnum : nval->inum);
 }
 
 
@@ -590,11 +594,11 @@ void set_var(node_t *node, var_tab_t *vars) {
     }
 
     if(is_str(right->val.type)){
-        alloc_str(&vars[index].val.arr.ptr, right->val.arr.ptr, right->val.arr.count);
+        //alloc_str(&vars[index].val.addr, right->val.addr, right->val.arr.count);
         return;
     }
-
-    vars[index].val = right->val;
+    vars[index].type = right->val.type;
+    vars[index].val = right->nval;
 }
 
 void get_var(node_t *node, var_tab_t *vars){
@@ -612,7 +616,8 @@ void get_var(node_t *node, var_tab_t *vars){
         eval_error(node, "Unknown identifier:");
         return;
     }
-    node->val = vars[index].val;
+    node->val.type = vars[index].type;
+    node->nval = vars[index].val;
 }
 
 /*
@@ -653,13 +658,14 @@ void node_echo(node_t *node){
         case type_nil:
             return;
         case type_flt:
-            fprintf(stdout, "%g\n", node->val.fnum);
+            fprintf(stdout, "%g\n", node->nval.fnum);
             return;
         case type_int:
-            fprintf(stdout, "%lld\n", node->val.inum);
+            fprintf(stdout, "%lld\n", node->nval.inum);
             return;
         case type_str:
-            fprintf(stdout, "'%s'\n", (char*)node->val.arr.ptr);
+            //char *ptr = (char*)&db->data[node->val.addr];
+            //fprintf(stdout, "'%s'\n", ptr);
             return;
         default:
             return;
@@ -670,11 +676,21 @@ void node_echo(node_t *node){
  ** Kompilator
  **/
 
-typedef struct {
-    size_t size;
-    size_t capacity;
-    uint8_t *data;
-} dbuffer_t;
+ibuffer_t ib_create(){
+    return (ibuffer_t){ .capacity = 1024, .inst = malloc(1024 * sizeof(instruct_t)) };
+}
+void ib_write(ibuffer_t *ib, instruct_t inst){
+    if(ib->size + sizeof(instruct_t) > ib->capacity) {
+        size_t new_cap = ib->capacity * 2;
+        ib->inst = realloc(ib->inst, new_cap);
+        ib->capacity = new_cap;
+    }
+    memcpy(ib->inst + ib->size, &inst, sizeof(instruct_t));
+    ib->size += sizeof(instruct_t);
+}
+void ib_free(ibuffer_t *ib){
+    if(ib->inst) free(ib->inst);
+}
 
 dbuffer_t db_create() {
     return (dbuffer_t){ .capacity = 4096, .data = malloc(4096) };
@@ -695,70 +711,87 @@ void db_free(dbuffer_t *db){
     if(db->data) free(db->data);
 }
 
-#define db_write_u32(db, val) do { uint32_t _v = (val); db_write(db, &_v, 4); } while(0)
-#define db_write_u16(db, val) do { uint16_t _v = (val); db_write(db, &_v, 2); } while(0)
-#define db_write_u8 (db, val) do { uint8_t  _v = (val); db_write(db, &_v, 1); } while(0)
 
-/*
-typedef enum {
-    OP_LOAD,
-    OP_PUSH,
-    OP_POP,
-    OP_ADD,
-    OP_SUB,
-    OP_MULT,
-    OP_DIV,
-    //OP_MOVE,
-    //OP_LOAD,
-    //OP_ADD,
-    //OP_SUB,
-    //OP_MULT,
-    //OP_DIV,
-    //OP_MOD,
-    //OP_NEG,
-    //OP_BAND,
-    //OP_BOR,
-    //OP_BXOR,
-    //OP_BNOT,
-    //OP_LSH,
-    //OP_RSH,
-    //OP_NOT,
-    //OP_JMP,
-    //OP_LT,
-    //OP_LE, 
-    //OP_TEST,
-} opcodes_t;
 
-void node_val_compile(node_t *node, dbuffer_t *data_buf, dbuffer_t *code_buf){
-    size_t data_pos = data_buf->size;
-    db_write(data_buf, node->val.type, sizeof(uint32_t));
-    size_t len = type_size(node->val.type);
+comp_fun_t comp_binop[] = {
+    [TK_PLUS] = comp_binop_arithmetic,
+    [TK_MINUS] = comp_binop_arithmetic,
+    [TK_STAR] = comp_binop_arithmetic,
+    [TK_SLASH] = comp_binop_arithmetic,
+    //[TK_OR] = comp_binop_binary,
+    //[TK_AND] = comp_binop_binary,
+    //[TK_XOR] = comp_binop_binary,
+    //[TK_COL] = comp_binop_col,
+    //[TK_QUEST] = comp_binop_quest,
+};
+
+//comp_fun_t unop_eval[] = {
+//    [TK_MINUS] = unop_negative,
+//    [TK_NEG] = unop_negate,
+//};
+
+void node_val_compile(node_t *node, ibuffer_t *ib){
+    instruct_t inst;
+    inst.arg = node->val.addr;
     switch(node->val.type){
         case type_int:
-            db_write(data_buf, &node->val.inum, len);
+            inst.opcode = OP_LOAD_INT; 
             break;
         case type_flt:
-            db_write(data_buf, &node->val.fnum, len);
+            inst.opcode = OP_LOAD_FLT;
             break;
         case type_arr:
-            db_write(data_buf, node->val.arr.ptr, len);
-            break;
+            return;
     }
-    uint32_t cmd;
+    ib_write(ib, inst);
 }
 
-void node_compile(node_t *node, dbuffer_t *data_buf, dbuffer_t *code_buf){
+void comp_binop_arithmetic(node_t *node, ibuffer_t *ib){
+    node_t *lhs = node->child;
+    node_t *rhs = node->child->next;
+    instruct_t inst = {0};
+
+    if(!is_num(lhs->val.type) || !is_num(rhs->val.type)){
+        eval_error(node, "Error: invalid operand type");
+        return;
+    }
+
+    node->val.type = (is_flt(lhs->val.type) || is_flt(rhs->val.type)) ? type_flt : type_int;
+    int types = ((lhs->val.type & type_flt) >> (VT_FLT - 1)) | ((rhs->val.type & type_flt) >> VT_FLT);
+    switch(node->op){
+        case TK_PLUS: {
+            switch(types) {
+                case 0: inst.opcode = OP_ADD_II; break;
+                case 1: inst.opcode = OP_ADD_IF; break;
+                case 2: inst.opcode = OP_ADD_FI; break;
+                case 3: inst.opcode = OP_ADD_FF; break;
+            }
+            break;
+        }
+        case TK_MINUS:
+            switch(types) {
+                case 0: inst.opcode = OP_SUB_II; break;
+                case 1: inst.opcode = OP_SUB_IF; break;
+                case 2: inst.opcode = OP_SUB_FI; break;
+                case 3: inst.opcode = OP_SUB_FF; break;
+            }
+            break;
+    }
+    ib_write(ib, inst);
+}
+
+void node_compile(node_t *node, ibuffer_t *ib){
     if(!node) return;
     switch(node->type) {
         case ND_VAL:
+            node_val_compile(node, ib);
             return;
         case ND_ID:
-            get_var(node, var_tab);
             return;
         case ND_BINOP:
-            node_eval(node->child);
-            node_eval(node->child->next);
-            binop_eval[node->op](node);
+            node_compile(node->child, ib);
+            node_compile(node->child->next, ib);
+            comp_binop[node->op](node, ib);
             return;
         case ND_UNOP:
             node_eval(node->child);
@@ -776,18 +809,60 @@ void node_compile(node_t *node, dbuffer_t *data_buf, dbuffer_t *code_buf){
     }
 }
 
-void compile(node_t *node){
-    dbuffer_t data_buf = db_create();
-    dbuffer_t code_buf = db_create();
 
-    node_compile(node, &data_buf, &code_buf);
-
-    db_free(&data_buf);
-    db_free(&code_buf);
+void execute(dbuffer_t *db, ibuffer_t *ib){
+    val_t stack[256];
+    uint32_t sp = 0;
+    uint32_t pc = 0;
+    uint8_t run = 1;
+    val_t rhs, lhs;
+    while(run) {
+        instruct_t inst = ib->inst[pc];
+        switch(inst.opcode){
+            case OP_HALT:
+                run = 0;
+                break;
+            case OP_LOAD_INT:
+                stack[sp].size = sizeof(uint64_t);
+                stack[sp].inum = *(uint64_t*)(db->data + inst.arg);
+                sp++; pc++;
+                break;
+            case OP_LOAD_FLT:
+                stack[sp].size = sizeof(double);
+                stack[sp].inum = *(double*)(db->data + inst.arg);
+                sp++; pc++;
+                break;
+            case OP_ADD_II:
+                rhs = stack[--sp];
+                lhs = stack[--sp];
+                stack[sp].type = type_int;
+                stack[sp].inum = lhs.inum + rhs.inum;
+                sp++; pc++;
+                break;
+            case OP_ADD_IF:
+                rhs = stack[--sp];
+                lhs = stack[--sp];
+                stack[sp].type = type_int;
+                stack[sp].inum = lhs.inum + rhs.inum;
+                sp++; pc++;
+                break;
+            case OP_ADD_FI:
+                rhs = stack[--sp];
+                lhs = stack[--sp];
+                stack[sp].type = type_int;
+                stack[sp].inum = lhs.inum + rhs.inum;
+                sp++; pc++;
+                break;
+            case OP_ADD_FF:
+                rhs = stack[--sp];
+                lhs = stack[--sp];
+                stack[sp].type = type_int;
+                stack[sp].inum = lhs.inum + rhs.inum;
+                sp++; pc++;
+                break;
+        }
+    }
 }
-
-*/
-
 
 /*
 *   Main
@@ -796,7 +871,7 @@ void compile(node_t *node){
 #define BUFSIZE 256
 
 int main(int argc, char *argv[]) { 
-    char buffer[BUFSIZE];
+    char line[BUFSIZE];
     FILE *file = stdin;
 
     if(argc > 1) {
@@ -807,18 +882,24 @@ int main(int argc, char *argv[]) {
         }
     }
 
-
-    
     if(file == stdin) fprintf(stdout, ">> ");
-    while(fgets(buffer, BUFSIZE, file) != NULL){
-        if(strncmp(buffer, "exit", 4) == 0) break;
-        node_t *root = parse(buffer);
+    while(fgets(line, BUFSIZE, file) != NULL){
+        if(strncmp(line, "exit", 4) == 0) break;
+        dbuffer_t data_buf = db_create();
+        node_t *root = parse(line, &data_buf);
         if(root){
-            node_print(root, 0);
+            node_print(root, &data_buf, 0);
             node_eval(root);
+            ibuffer_t code_buf = ib_create();
+            node_compile(root, &code_buf);
+            instruct_t inst = {.opcode = OP_HALT};
+            ib_write(&code_buf, inst);
+            execute(&data_buf, &code_buf);
+            ib_free(&code_buf);
             node_echo(root);
             node_free(root);
         }
+        db_free(&data_buf);
         if(file == stdin) fprintf(stdout, ">> ");
     }
     if(file != stdin) fclose(file);
