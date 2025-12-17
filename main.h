@@ -4,36 +4,30 @@
 #include <stdint.h>
 
 typedef enum {
-    OP_LOAD_INT,
-    OP_LOAD_FLT,
-    OP_PUSH,
-    OP_POP,
-    OP_ADD_II,
-    OP_ADD_IF,
-    OP_ADD_FI,
-    OP_ADD_FF,
-    OP_SUB_II,
-    OP_SUB_IF,
-    OP_SUB_FI,
-    OP_SUB_FF,
+    OP_HALT,
+    OP_LOAD,
+    OP_ADD,
+    OP_SUB,
     OP_MULT,
     OP_DIV,
-    OP_HALT,
+    OP_AND,
+    OP_OR,
+    OP_XOR,
+    OP_PRINT,
 } opcode_t;
 
 typedef struct {
     uint32_t opcode;
     uint32_t arg;
-} instruct_t;
+} inst_t;
 
 typedef struct {
-    size_t size;
+    size_t count;
     size_t capacity;
-    instruct_t *inst;
+    inst_t *inst;
 } ibuffer_t;
 
-ibuffer_t ib_create();
-void ib_write(ibuffer_t *ib, instruct_t inst);
+void ib_write(ibuffer_t *ib, uint32_t opcode, uint32_t arg);
 void ib_free(ibuffer_t *db);
 
 typedef struct {
@@ -52,8 +46,7 @@ void db_free(dbuffer_t *db);
 
 typedef enum {
     TK_EOF = 0,
-    TK_FLT,
-    TK_INT,
+    TK_NUM,
     TK_STR,
     TK_ID,
     TK_PLUS     = '+',
@@ -75,10 +68,7 @@ typedef struct {
     token_type_t type;
     char *start;
     size_t len;
-    union {
-        double fnum;
-        int64_t inum;
-    };
+    double num;
 } token_t;
 
 typedef struct {
@@ -104,26 +94,22 @@ typedef enum {
 
 typedef enum {
     VT_NIL,
-    VT_FLT,
-    VT_INT,
+    VT_NUM,
     VT_CHR,
     VT_ARR,
 } val_type_t;
 
 #define type_nil (1 << VT_NIL)
-#define type_flt (1 << VT_FLT)
-#define type_int (1 << VT_INT)
+#define type_num (1 << VT_NUM)
 #define type_chr (1 << VT_CHR)
 #define type_arr (1 << VT_ARR)
 #define type_str (type_chr | type_arr)
 
 #define is_nil(t) (t & type_nil)
-#define is_flt(t) (t & type_flt)
-#define is_int(t) (t & type_int)
+#define is_num(t) (t & type_num)
 #define is_chr(t) (t & type_chr)
 #define is_arr(t) (t & type_arr)
 #define is_str(t) ((t & type_arr) && (t & type_chr))
-#define is_num(t) ((t & type_flt) || (t & type_int))
 
 #define type_size(t) (is_num(t) ? 8 : is_chr(t) ? 1 : 0)
 
@@ -141,8 +127,7 @@ typedef struct {
     uint32_t type;
     uint32_t size;
     union {
-        int64_t inum;
-        double fnum;
+        double num;
         void *addr;
     };
 } val_t;
@@ -224,9 +209,9 @@ void binop_tern_quest(node_t *node);
 void sin_eval(node_t *node);
 void cos_eval(node_t *node);
 
-void node_val_compile(node_t *node, ibuffer_t *ib);
-void comp_binop_arithmetic(node_t *node, ibuffer_t *ib);
-void node_compile(node_t *node, ibuffer_t *ib);
+void comp_node_val(node_t *node, ibuffer_t *ib);
+void comp_num_binop(node_t *node, ibuffer_t *ib);
+void comp_node(node_t *node, ibuffer_t *ib);
 
 void set_var(node_t *node, var_tab_t *vars);
 void get_var(node_t *node, var_tab_t *vars);
