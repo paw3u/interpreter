@@ -91,7 +91,7 @@ node_handler_t node_handler[] = {
     [TK_AND]    = { NULL,       node_binop,     30 },
     [TK_OR]     = { NULL,       node_binop,     30 },
     [TK_XOR]    = { NULL,       node_binop,     30 },
-    [TK_NEG]    = { node_unop,  NULL,           30 },
+    [TK_TILDE]  = { node_unop,  NULL,           30 },
 };
 
 /*
@@ -99,8 +99,13 @@ node_handler_t node_handler[] = {
 */
 
 keyword_t keywords[] = {
-    [KW_SIN]    = { "sin",      sin_eval },
-    [KW_COS]    = { "cos",      cos_eval },
+    [KW_SIN]    = { "sin",      0,          sin_eval },
+    [KW_COS]    = { "cos",      0,          cos_eval },
+    [KW_IF]     = { "if",       TK_IF,      NULL },
+    [KW_THEN]   = { "then",     TK_THEN,    NULL },
+    [KW_ELSE]   = { "else",     TK_ELSE,    NULL },
+    [KW_ELIF]   = { "elseif",   TK_ELIF,    NULL },
+    [KW_END]    = { "end",      TK_END,     NULL },
 };
 
 /*
@@ -497,7 +502,7 @@ op_fun_t binop_eval[] = {
 
 op_fun_t unop_eval[] = {
     [TK_MINUS] = unop_negative,
-    [TK_NEG] = unop_negate,
+    [TK_TILDE] = unop_negate,
 };
 
 /*
@@ -672,10 +677,14 @@ comp_fun_t comp_binop[] = {
     //[TK_QUEST] = comp_binop_quest,
 };
 
-//comp_fun_t unop_eval[] = {
-//    [TK_MINUS] = unop_negative,
-//    [TK_NEG] = unop_negate,
-//};
+comp_fun_t comp_unop[] = {
+    [TK_MINUS] = comp_num_unop,
+    [TK_TILDE] = comp_num_unop,
+};
+
+/*
+*   Kompilacja węzła z wartością stałą
+*/
 
 void comp_node_val(node_t *node, ibuffer_t *ib){
     switch(node->val.type){
@@ -686,6 +695,14 @@ void comp_node_val(node_t *node, ibuffer_t *ib){
             return;
     }
 }
+
+void comp_node_call(node_t *node, ibuffer_t *ib){
+
+}
+
+/*
+*   Kompilacja węzła operacji binarnych na danych liczbowych
+*/
 
 void comp_num_binop(node_t *node, ibuffer_t *ib){
     node_t *lhs = node->child;
@@ -702,12 +719,36 @@ void comp_num_binop(node_t *node, ibuffer_t *ib){
         case TK_MINUS: ib_write(ib, OP_SUB, 0); return;
         case TK_STAR: ib_write(ib, OP_MULT, 0); return;
         case TK_SLASH: ib_write(ib, OP_DIV, 0); return;
-        case TK_AND: ib_write(ib, OP_AND, 0); return;
-        case TK_OR: ib_write(ib, OP_OR, 0); return;
-        case TK_XOR: ib_write(ib, OP_XOR, 0); return;
+        case TK_AND: ib_write(ib, OP_BAND, 0); return;
+        case TK_OR: ib_write(ib, OP_BOR, 0); return;
+        case TK_XOR: ib_write(ib, OP_BXOR, 0); return;
         default: return;
     }
 }
+
+/*
+*   Kompilacja węzła operacji unarnych na danych liczbowych
+*/
+
+void comp_num_unop(node_t *node, ibuffer_t *ib){
+    node_t *arg = node->child;
+
+    if(!is_num(arg->val.type)){
+        eval_error(node, "Error: invalid operand type");
+        return;
+    }
+    node->val.type = type_num;
+
+    switch(node->op){
+        case TK_MINUS: ib_write(ib, OP_NEG, 0); return;
+        case TK_TILDE: ib_write(ib, OP_BNOT, 0); return;
+        default: return;
+    }
+}
+
+/*
+*   Kompilacja węzła
+*/
 
 void comp_node(node_t *node, ibuffer_t *ib){
     if(!node) return;
@@ -723,41 +764,47 @@ void comp_node(node_t *node, ibuffer_t *ib){
             comp_binop[node->op](node, ib);
             return;
         case ND_UNOP:
-            node_eval(node->child);
-            unop_eval[node->op](node);
+            comp_node(node->child, ib);
+            comp_unop[node->op](node, ib);
             return;
         case ND_ASSIGN:
-            set_var(node, var_tab);
+            //set_var(node, var_tab);
             return;
         case ND_CALL:
-            node_eval(node->child);
-            keywords[node->op].fun(node);
+            comp_node(node->child, ib);
+            comp_node_call(node, ib);
             return;
         default:
             return;
     }
 }
 
+/*
+*   Maszyna wirtualna wykonująca bytecode
+*/
+
 void execute(dbuffer_t *db, ibuffer_t *ib){
     val_t stack[256];
     uint32_t sp = 0;
     uint32_t pc = 0;
 
+    // Musi się zgadzać z opcode_t
     static void *op_table[] = {
         &&op_halt, &&op_load, &&op_add, &&op_sub,
-        &&op_mult, &&op_div, &&op_and, &&op_or,
-        &&op_xor, &&op_print
+        &&op_mult, &&op_div, &&op_idiv, &&op_mod,
+        &&op_neg, &&op_band, &&op_bor, &&op_bxor, 
+        &&op_bnot, &&op_call, &&op_print
     };
 
-    #define NEXT() goto *op_table[ib->inst[pc++].opcode]
-    #define INST ib->inst[pc]
+    #define NEXT() goto *op_table[ib->inst[++pc].opcode]
+    #define arg ib->inst[pc].arg
 
-    NEXT();
+    goto *op_table[ib->inst[0].opcode];
 
     op_halt:
         return;
     op_load:
-        stack[sp++].num = *(double*)(db->data + INST.arg);
+        stack[sp++].num = *(double*)(db->data + arg);
         NEXT();
     op_add:
         stack[sp-2].num = stack[sp-2].num + stack[sp-1].num; sp--;
@@ -771,14 +818,30 @@ void execute(dbuffer_t *db, ibuffer_t *ib){
     op_div:
         stack[sp-2].num = stack[sp-2].num / stack[sp-1].num; sp--;
         NEXT();
-    op_and:
+    op_idiv:
+        stack[sp-2].num = ((int32_t)stack[sp-2].num) / ((int32_t)stack[sp-1].num); sp--;
+        NEXT();
+    op_mod:
+        stack[sp-2].num = ((int32_t)stack[sp-2].num) % ((int32_t)stack[sp-1].num); sp--;
+        NEXT();
+    op_neg:
+        stack[sp-1].num = -stack[sp-1].num;
+        NEXT();
+    op_band:
         stack[sp-2].num = ((int32_t)stack[sp-2].num) & ((int32_t)stack[sp-1].num); sp--;
         NEXT();
-    op_or:
+    op_bor:
         stack[sp-2].num = ((int32_t)stack[sp-2].num) | ((int32_t)stack[sp-1].num); sp--;
         NEXT();
-    op_xor:
+    op_bxor:
         stack[sp-2].num = ((int32_t)stack[sp-2].num) ^ ((int32_t)stack[sp-1].num); sp--;
+        NEXT();
+    op_bnot:
+        stack[sp-1].num = ~((int32_t)stack[sp-1].num);
+        NEXT();
+    op_not:
+        NEXT();
+    op_call:
         NEXT();
     op_print:
         fprintf(stdout, "%g\n", stack[--sp].num);

@@ -10,9 +10,14 @@ typedef enum {
     OP_SUB,
     OP_MULT,
     OP_DIV,
-    OP_AND,
-    OP_OR,
-    OP_XOR,
+    OP_IDIV,
+    OP_MOD,
+    OP_NEG,
+    OP_BAND,
+    OP_BOR,
+    OP_BXOR,
+    OP_BNOT,
+    OP_CALL,
     OP_PRINT,
 } opcode_t;
 
@@ -46,9 +51,6 @@ void db_free(dbuffer_t *db);
 
 typedef enum {
     TK_EOF = 0,
-    TK_NUM,
-    TK_STR,
-    TK_ID,
     TK_PLUS     = '+',
     TK_MINUS    = '-',
     TK_STAR     = '*',
@@ -56,12 +58,21 @@ typedef enum {
     TK_AND      = '&',
     TK_OR       = '|',
     TK_XOR      = '^',
-    TK_NEG      = '~',
+    TK_TILDE    = '~',
     TK_LPAREN   = '(',
     TK_RPAREN   = ')',
     TK_EQ       = '=',
     TK_QUEST    = '?',
     TK_COL      = ':',
+    TK_NUM      = 256,
+    TK_STR,
+    TK_ID,
+    TK_IF,
+    TK_THEN,
+    TK_ELSE,
+    TK_ELIF,
+    TK_END,
+
 } token_type_t;
 
 typedef struct {
@@ -165,12 +176,18 @@ typedef void (*comp_fun_t)(node_t *node, ibuffer_t *ib);
 
 typedef struct {
     const char *name;
+    token_type_t token;
     op_fun_t fun;
 } keyword_t;
 
 typedef enum {
     KW_SIN,
     KW_COS,
+    KW_IF,
+    KW_THEN,
+    KW_ELSE,
+    KW_ELIF,
+    KW_END,
     KEYWORDS_NUM,
 } keyword_type_t;
 
@@ -211,6 +228,7 @@ void cos_eval(node_t *node);
 
 void comp_node_val(node_t *node, ibuffer_t *ib);
 void comp_num_binop(node_t *node, ibuffer_t *ib);
+void comp_num_unop(node_t *node, ibuffer_t *ib);
 void comp_node(node_t *node, ibuffer_t *ib);
 
 void set_var(node_t *node, var_tab_t *vars);
