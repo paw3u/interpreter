@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <errno.h>
 #include "main.h"
 
 /*
@@ -81,9 +82,12 @@ node_handler_t node_handler[] = {
     [TK_ID]     = { node_id,    NULL,           0  },
     [TK_LPAREN] = { node_group, NULL,           0  },
     [TK_RPAREN] = { NULL,       NULL,           0  },
-    [TK_EQ]     = { NULL,       node_assign,    1  },
-    [TK_QUEST]  = { NULL,       node_binop,     2  },
-    [TK_COL]    = { NULL,       node_binop,     3  },
+    [TK_IF]     = { NULL,       NULL,           8  },
+    [TK_THEN]   = { NULL,       NULL,           8  },
+    [TK_ELSE]   = { NULL,       NULL,           8  },
+    [TK_ELIF]   = { NULL,       NULL,           8  },
+    [TK_END]    = { NULL,       NULL,           8  },
+    [TK_EQ]     = { NULL,       node_assign,    9  },
     [TK_PLUS]   = { NULL,       node_binop,     10 },
     [TK_MINUS]  = { node_unop,  node_binop,     10 },
     [TK_STAR]   = { NULL,       node_binop,     20 },
@@ -99,8 +103,8 @@ node_handler_t node_handler[] = {
 */
 
 keyword_t keywords[] = {
-    [KW_SIN]    = { "sin",      0,          sin_eval },
-    [KW_COS]    = { "cos",      0,          cos_eval },
+    //[KW_SIN]    = { "sin",      0,          sin_eval },
+    //[KW_COS]    = { "cos",      0,          cos_eval },
     [KW_IF]     = { "if",       TK_IF,      NULL },
     [KW_THEN]   = { "then",     TK_THEN,    NULL },
     [KW_ELSE]   = { "else",     TK_ELSE,    NULL },
@@ -178,7 +182,6 @@ node_t* node_val(lexer_t *lex) {
             node->val.size = sizeof(double);
             node->val.addr = lex->data->size;
             db_write(lex->data, &lex->token.num, sizeof(double));
-            node->nval.num = lex->token.num;
             break;
         case TK_STR:
             node->val.type = type_str;
@@ -201,6 +204,13 @@ node_t* node_id(lexer_t *lex) {
     for(size_t i = 0; i < KEYWORDS_NUM; i++) {
         if(!strncmp(keywords[i].name, lex->token.start, strlen(keywords[i].name))){
             if(keywords[i].fun) return node_call(lex, i);
+            switch(i) {
+                case KW_IF:
+                case KW_ELSE:
+                case KW_ELIF:
+                case KW_END:
+                    return node_if(lex, keywords[i].token);
+            }
         }
     }
     node_t *node = node_alloc(lex, ND_ID);
@@ -256,6 +266,34 @@ node_t* node_call(lexer_t *lex, uint8_t kw) {
     node->op = kw;
     node->child = expr;
     return node;
+}
+
+/*
+*   Węzeł instrukcji warunkowej
+*/
+
+node_t* node_if(lexer_t *lex, token_type_t op) {
+    if(op != KW_IF) {
+        return node_error(lex, "'if' statement syntax error");
+    }
+
+    next_token(lex);
+    node_t *cond = node_expr(lex, node_handler[op].lbp);
+    if(!cond) return NULL;
+
+    next_token(lex);
+    if(lex->token.type != TK_THEN){
+        return node_error(lex, "'if' statement syntax error: 'then' missing");
+    }
+    next_token(lex);
+    node_t *expr_true = node_expr(lex, node_handler[op].lbp);
+    if(!expr_true) return NULL;
+
+    next_token(lex);
+    node_t *expr_false = node_expr(lex, node_handler[op].lbp);
+    if(!expr_false) return NULL;
+
+    return cond;
 }
 
 /*
@@ -365,151 +403,10 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
 }
 
 /*
-*   Ewaluacja operacji arytmetycznych
+*   Wydruki błędów kompilacji
 */
 
-void binop_arithmetic(node_t *node) {
-    node_t *lhs = node->child;
-    node_t *rhs = node->child->next;
-    if(!is_num(lhs->val.type) || !is_num(rhs->val.type)){
-        eval_error(node, "Eval error: invalid operand type");
-        return;
-    }
-    node->val.type = type_num;
-    node->nval.num = lhs->nval.num;
-    switch(node->op) {
-        case TK_PLUS: node->nval.num += rhs->nval.num; return;
-        case TK_MINUS: node->nval.num -= rhs->nval.num; return;
-        case TK_STAR: node->nval.num *= rhs->nval.num; return;
-        case TK_SLASH: node->nval.num /= rhs->nval.num; return;
-        default: return;
-    }
-}
-
-void unop_negative(node_t *node){
-    node->val.type = node->child->val.type;
-    node->nval.num = -node->child->nval.num;
-}
-
-/*
-*   Ewaluacja operacji binarnych
-*/
-
-void binop_bianry(node_t *node) {
-    node_t *lhs = node->child;
-    node_t *rhs = node->child->next;
-    if(!is_num(lhs->val.type) || !is_num(rhs->val.type)){
-        eval_error(node, "Eval error: invalid operand type");
-        return;
-    }
-    node->val.type = type_num;
-    int32_t ilhs = lhs->nval.num;
-    int32_t irhs = rhs->nval.num;
-    switch(node->op) {
-        case TK_OR: node->nval.num = ilhs | irhs; return;
-        case TK_AND: node->nval.num = ilhs & irhs; return;
-        case TK_XOR: node->nval.num = ilhs ^ irhs; return;
-        default: return;
-    }
-}
-
-void unop_negate(node_t *node){
-    if(!is_num(node->child->val.type)) {
-        eval_error(node, "Eval error: invalid operand type");
-        return;
-    }
-    int32_t ival = node->child->nval.num;
-    node->val.type = type_num;
-    node->nval.num = ~ival;
-}
-
-/*
-*   Ewaluacja instrukcji warunkowej ternary
-*/
-
-void binop_tern_col(node_t *node) {
-    node_t *lhs = node->child;
-    node_t *rhs = node->child->next;
-    if(is_nil(lhs->val.type) || is_nil(rhs->val.type)) {
-        eval_error(node, "Eval error: incorrect argument");
-        return;
-    }
-}
-
-void binop_tern_quest(node_t *node) {
-    node_t *cond = node->child;
-    node_t *alts = node->child->next;
-    if(!is_num(cond->val.type)) {
-        eval_error(node, "Eval error: incorrect condition");
-        return;
-    }
-    if(alts->type != ND_BINOP || alts->op != TK_COL) {
-        eval_error(node, "Eval error: incorrect alternatives");
-        return;
-    }
-    if(cond->nval.num) {
-        node->val = alts->child->val;
-        node->nval = alts->child->nval;
-    }
-    else {
-        node->val = alts->child->next->val;
-        node->nval = alts->child->next->nval;
-    }
-}
-
-/*
-*   Ewaluacja funkcji wbudowanych
-*/
-
-void sin_eval(node_t *node) {
-    val_info_t *val = &node->child->val;
-    val_t *nval = &node->child->nval;
-    if(!is_num(val->type)) {
-        eval_error(node, "Eval error: invalid argument type");
-        return;
-    }
-    node->val.type = type_num;
-    node->nval.num = sin(nval->num);
-}
-
-void cos_eval(node_t *node) {
-    val_info_t *val = &node->child->val;
-    val_t *nval = &node->child->nval;
-    if(!is_num(val->type)) {
-        eval_error(node, "Eval error: invalid argument type");
-        return;
-    }
-    node->val.type = type_num;
-    node->nval.num = cos(nval->num);
-}
-
-
-/*
-*   Tablice funkcji ewaluacji operatorów
-*/
-
-op_fun_t binop_eval[] = {
-    [TK_PLUS] = binop_arithmetic,
-    [TK_MINUS] = binop_arithmetic,
-    [TK_STAR] = binop_arithmetic,
-    [TK_SLASH] = binop_arithmetic,
-    [TK_OR] = binop_bianry,
-    [TK_AND] = binop_bianry,
-    [TK_XOR] = binop_bianry,
-    [TK_COL] = binop_tern_col,
-    [TK_QUEST] = binop_tern_quest,
-};
-
-op_fun_t unop_eval[] = {
-    [TK_MINUS] = unop_negative,
-    [TK_TILDE] = unop_negate,
-};
-
-/*
-*   Wydruki błędów ewaluacji
-*/
-
-void eval_error(node_t *node, char *msg){
+void comp_error(node_t *node, char *msg){
     if(node->type == ND_ID){
         fprintf(stderr, "%s %.*s [%llu]\n", msg, (int)node->id->len, node->id->name, node->token_pos);
         return;
@@ -540,11 +437,11 @@ void set_var(node_t *node, var_tab_t *vars) {
     while(vars[index].name && strncmp(vars[index].name, left->id->name, left->id->len)){
         index = (index + 1) & (VARTAB_SIZE - 1);
         if(index == start) {
-            eval_error(node, "Assignment error: variable table overflow");
+            comp_error(node, "Assignment error: variable table overflow");
             return;
         }
     }
-    node_eval(right);
+    //node_eval(right);
     if(is_nil(right->val.type)) return;
 
     if(!vars[index].name) {
@@ -557,7 +454,6 @@ void set_var(node_t *node, var_tab_t *vars) {
         return;
     }
     vars[index].type = right->val.type;
-    vars[index].val = right->nval;
 }
 
 void get_var(node_t *node, var_tab_t *vars){
@@ -572,65 +468,15 @@ void get_var(node_t *node, var_tab_t *vars){
         }
     }
     if(!vars[index].name || overflow){
-        eval_error(node, "Unknown identifier:");
+        comp_error(node, "Unknown identifier:");
         return;
     }
     node->val.type = vars[index].type;
-    node->nval = vars[index].val;
 }
 
 /*
-*   Ewaluacja drzewa
-*/
-
-void node_eval(node_t *node){
-    if(!node) return;
-    switch(node->type) {
-        case ND_VAL:
-            return;
-        case ND_ID:
-            get_var(node, var_tab);
-            return;
-        case ND_BINOP:
-            node_eval(node->child);
-            node_eval(node->child->next);
-            binop_eval[node->op](node);
-            return;
-        case ND_UNOP:
-            node_eval(node->child);
-            unop_eval[node->op](node);
-            return;
-        case ND_ASSIGN:
-            set_var(node, var_tab);
-            return;
-        case ND_CALL:
-            node_eval(node->child);
-            keywords[node->op].fun(node);
-            return;
-        default:
-            return;
-    }
-}
-
-void node_echo(node_t *node){
-    switch(node->val.type){
-        case type_nil:
-            return;
-        case type_num:
-            fprintf(stdout, "%g\n", node->nval.num);
-            return;
-        case type_str:
-            //char *ptr = (char*)&db->data[node->val.addr];
-            //fprintf(stdout, "'%s'\n", ptr);
-            return;
-        default:
-            return;
-    }
-}
-
-/**
- ** Kompilator
- **/
+ *  Bufor instrukcji
+ */
 
 void ib_write(ibuffer_t *ib, uint32_t opcode, uint32_t arg){
     if(ib->count >= ib->capacity) {
@@ -643,6 +489,10 @@ void ib_write(ibuffer_t *ib, uint32_t opcode, uint32_t arg){
 void ib_free(ibuffer_t *ib){
     if(ib->inst) free(ib->inst);
 }
+
+/*
+ *  Bufor danych
+ */
 
 dbuffer_t db_create() {
     return (dbuffer_t){ .capacity = 4096, .data = malloc(4096) };
@@ -663,7 +513,9 @@ void db_free(dbuffer_t *db){
     if(db->data) free(db->data);
 }
 
-
+/*
+ *  Tablica funkcji kompilacji
+ */
 
 comp_fun_t comp_binop[] = {
     [TK_PLUS] = comp_num_binop,
@@ -709,7 +561,7 @@ void comp_num_binop(node_t *node, ibuffer_t *ib){
     node_t *rhs = node->child->next;
 
     if(!is_num(lhs->val.type) || !is_num(rhs->val.type)){
-        eval_error(node, "Error: invalid operand type");
+        comp_error(node, "Error: invalid operand type");
         return;
     }
     node->val.type = type_num;
@@ -734,7 +586,7 @@ void comp_num_unop(node_t *node, ibuffer_t *ib){
     node_t *arg = node->child;
 
     if(!is_num(arg->val.type)){
-        eval_error(node, "Error: invalid operand type");
+        comp_error(node, "Error: invalid operand type");
         return;
     }
     node->val.type = type_num;
@@ -872,15 +724,13 @@ int main(int argc, char *argv[]) {
         dbuffer_t data_buf = db_create();
         node_t *root = parse(line, &data_buf);
         if(root){
-            //node_print(root, &data_buf, 0);
-            //node_eval(root);
+            node_print(root, &data_buf, 0);
             ibuffer_t code_buf = {0};
             comp_node(root, &code_buf);
             ib_write(&code_buf, OP_PRINT, 0);
             ib_write(&code_buf, OP_HALT, 0);
             execute(&data_buf, &code_buf);
             ib_free(&code_buf);
-            //node_echo(root);
             node_free(root); 
         }
         db_free(&data_buf);

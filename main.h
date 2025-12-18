@@ -72,7 +72,6 @@ typedef enum {
     TK_ELSE,
     TK_ELIF,
     TK_END,
-
 } token_type_t;
 
 typedef struct {
@@ -100,6 +99,7 @@ typedef enum {
     ND_VAL,
     ND_ID,
     ND_CALL,
+    ND_FLOW,
     ND_ASSIGN,
 } node_type_t;
 
@@ -159,7 +159,6 @@ typedef struct node_t node_t;
 struct node_t {
     node_type_t type;
     val_info_t val;
-    val_t nval; // Tylko testowo do ewaluacji drzewa
     size_t token_pos;
     node_t *child;
     node_t *next;
@@ -213,29 +212,21 @@ node_t* node_id(lexer_t *lex);
 node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
 node_t* node_call(lexer_t *lex, uint8_t kw);
+node_t* node_if(lexer_t *lex, token_type_t op);
 node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, uint8_t rbp);
 node_t* node_error(lexer_t *lex, char *msg);
 uint32_t hash(const char *str, size_t len, uint32_t seed);
 void node_print(node_t *node, dbuffer_t *db, int indent);
 
-void binop_arithmetic(node_t *node);
-void unop_negative(node_t *node);
-void binop_tern_col(node_t *node);
-void binop_tern_quest(node_t *node);
-void sin_eval(node_t *node);
-void cos_eval(node_t *node);
-
 void comp_node_val(node_t *node, ibuffer_t *ib);
 void comp_num_binop(node_t *node, ibuffer_t *ib);
 void comp_num_unop(node_t *node, ibuffer_t *ib);
 void comp_node(node_t *node, ibuffer_t *ib);
+void comp_error(node_t *node, char *msg);
 
 void set_var(node_t *node, var_tab_t *vars);
 void get_var(node_t *node, var_tab_t *vars);
-void node_eval(node_t *node);
-
-void eval_error(node_t *node, char *msg);
 
 node_t* parse(char *expr, dbuffer_t *data);
 
