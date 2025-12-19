@@ -99,7 +99,7 @@ typedef enum {
     ND_VAL,
     ND_ID,
     ND_CALL,
-    ND_FLOW,
+    ND_IF,
     ND_ASSIGN,
 } node_type_t;
 
@@ -180,8 +180,8 @@ typedef struct {
 } keyword_t;
 
 typedef enum {
-    KW_SIN,
-    KW_COS,
+    //KW_SIN,
+    //KW_COS,
     KW_IF,
     KW_THEN,
     KW_ELSE,
@@ -212,7 +212,7 @@ node_t* node_id(lexer_t *lex);
 node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
 node_t* node_call(lexer_t *lex, uint8_t kw);
-node_t* node_if(lexer_t *lex, token_type_t op);
+node_t* node_if(lexer_t *lex);
 node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, uint8_t rbp);
 node_t* node_error(lexer_t *lex, char *msg);

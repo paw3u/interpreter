@@ -9,6 +9,18 @@
 #include "main.h"
 
 /*
+*   Słowa kluczowe
+*/
+
+keyword_t keywords[] = {
+    [KW_IF]     = { "if",       TK_IF,      NULL },
+    [KW_THEN]   = { "then",     TK_THEN,    NULL },
+    [KW_ELSE]   = { "else",     TK_ELSE,    NULL },
+    [KW_ELIF]   = { "elif",     TK_ELIF,    NULL },
+    [KW_END]    = { "end",      TK_END,     NULL },
+};
+
+/*
 *   Przejście do kolejnego tokenu
 */
 
@@ -37,8 +49,29 @@ void next_token(lexer_t *lex) {
     }
     if(isalpha(c)) {
         while(isalpha(*lex->pos)) lex->pos++;
-        lex->peek.type = TK_ID;
         lex->peek.len = lex->pos - lex->peek.start;
+        for(size_t i = 0; i < KEYWORDS_NUM; i++) {
+            if(!strncmp(keywords[i].name, lex->peek.start, strlen(keywords[i].name))){
+                switch(i) {
+                    case KW_IF:
+                        lex->peek.type = TK_IF;
+                        return;
+                    case KW_THEN:
+                        lex->peek.type = TK_THEN;
+                        return;
+                    case KW_ELSE:
+                        lex->peek.type = TK_ELSE;
+                        return;
+                    case KW_ELIF:
+                        lex->peek.type = TK_ELIF;
+                        return;
+                    case KW_END:
+                        lex->peek.type = TK_END;
+                        return;
+                }
+            }
+        }
+        lex->peek.type = TK_ID;
         return;
     }
     if(c == '\'') {
@@ -82,7 +115,7 @@ node_handler_t node_handler[] = {
     [TK_ID]     = { node_id,    NULL,           0  },
     [TK_LPAREN] = { node_group, NULL,           0  },
     [TK_RPAREN] = { NULL,       NULL,           0  },
-    [TK_IF]     = { NULL,       NULL,           8  },
+    [TK_IF]     = { node_if,    NULL,           8  },
     [TK_THEN]   = { NULL,       NULL,           8  },
     [TK_ELSE]   = { NULL,       NULL,           8  },
     [TK_ELIF]   = { NULL,       NULL,           8  },
@@ -98,19 +131,7 @@ node_handler_t node_handler[] = {
     [TK_TILDE]  = { node_unop,  NULL,           30 },
 };
 
-/*
-*   Słowa kluczowe i funkcje
-*/
 
-keyword_t keywords[] = {
-    //[KW_SIN]    = { "sin",      0,          sin_eval },
-    //[KW_COS]    = { "cos",      0,          cos_eval },
-    [KW_IF]     = { "if",       TK_IF,      NULL },
-    [KW_THEN]   = { "then",     TK_THEN,    NULL },
-    [KW_ELSE]   = { "else",     TK_ELSE,    NULL },
-    [KW_ELIF]   = { "elseif",   TK_ELIF,    NULL },
-    [KW_END]    = { "end",      TK_END,     NULL },
-};
 
 /*
 *   Tablica zmiennych globalnych
@@ -201,18 +222,6 @@ node_t* node_val(lexer_t *lex) {
 */
 
 node_t* node_id(lexer_t *lex) {
-    for(size_t i = 0; i < KEYWORDS_NUM; i++) {
-        if(!strncmp(keywords[i].name, lex->token.start, strlen(keywords[i].name))){
-            if(keywords[i].fun) return node_call(lex, i);
-            switch(i) {
-                case KW_IF:
-                case KW_ELSE:
-                case KW_ELIF:
-                case KW_END:
-                    return node_if(lex, keywords[i].token);
-            }
-        }
-    }
     node_t *node = node_alloc(lex, ND_ID);
     node->id = (id_node_t*) malloc(sizeof(id_node_t));
     if(!node->id) exit(ENOMEM);
@@ -272,49 +281,63 @@ node_t* node_call(lexer_t *lex, uint8_t kw) {
 *   Węzeł instrukcji warunkowej
 */
 
-node_t* node_if(lexer_t *lex, token_type_t op) {
-    if(op != TK_IF) {
+node_t* node_if(lexer_t *lex) {
+    if(lex->token.type != TK_IF && lex->token.type != TK_ELIF) {
         return node_error(lex, "'if' statement syntax error");
     }
 
-    next_token(lex);
-    node_t *cond = node_expr(lex, node_handler[op].lbp);
+    uint8_t elif = 0;
+    uint8_t lbp = node_handler[TK_IF].lbp;
+    node_t *cond = node_expr(lex, lbp);
     if(!cond) return NULL;
+    
+    node_t *node = node_alloc(lex, ND_IF);
+    node->child = cond;
 
     next_token(lex);
     if(lex->token.type != TK_THEN){
+        node_free(node);
         return node_error(lex, "'if' statement syntax error: 'then' missing");
     }
-    next_token(lex);
-    node_t *expr_true = node_expr(lex, node_handler[op].lbp);
-    if(!expr_true) return NULL;
-    
+    node_t *expr_true = node_expr(lex, lbp);
+    if(!expr_true){
+        node_free(node);
+        return NULL;
+    }
+    cond->next = expr_true;
+
     next_token(lex);
     node_t *expr_false = NULL;
     if(lex->token.type == TK_END){
-        cond->child = expr_true;
-        return cond;
+        return node;
     }
     else if(lex->token.type == TK_ELSE){
-        expr_false = node_expr(lex, node_handler[op].lbp);
+        expr_false = node_expr(lex, lbp);
     }
     else if(lex->token.type == TK_ELIF){
-        expr_false = node_if(lex, node_handler[op].lbp);
+        expr_false = node_if(lex);
+        elif = 1;
     }
     else{
+        node_free(node);
         return node_error(lex, "'if' statement syntax error");
     }
-    if(!expr_false) return NULL;
+
+    if(!expr_false) {
+        node_free(node);
+        return NULL;
+    }
+    expr_true->next = expr_false;
+
+    if(elif) return node;
 
     next_token(lex);
     if(lex->token.type != TK_END){
+        node_free(node);
         return node_error(lex, "'if' statement syntax error: 'end' missing");
     }
 
-    cond->child = expr_true;
-    expr_true->next = expr_false;
-
-    return cond;
+    return node;
 }
 
 /*
@@ -382,6 +405,7 @@ node_t* parse(char *expr, dbuffer_t *data) {
 
 void node_print(node_t *node, dbuffer_t *db, int indent) {
     if(!node) return;
+    node_t *next;
     for(int i = 0; i < indent; i++) fprintf(stdout, "  ");
     switch(node->type) {
         case ND_VAL:
@@ -412,7 +436,16 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
         case ND_CALL:
             fprintf(stdout, "CALL %s\n", keywords[node->op].name);
             node_print(node->child, db, indent + 1);
-            node_t *next = node->child->next;
+            next = node->child->next;
+            while(next) {
+                node_print(next, db, indent + 1);
+                next = next->next;
+            }
+            break;
+        case ND_IF:
+            fprintf(stdout, "IF\n", keywords[node->op].name);
+            node_print(node->child, db, indent + 1);
+            next = node->child->next;
             while(next) {
                 node_print(next, db, indent + 1);
                 next = next->next;
