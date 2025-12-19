@@ -273,7 +273,7 @@ node_t* node_call(lexer_t *lex, uint8_t kw) {
 */
 
 node_t* node_if(lexer_t *lex, token_type_t op) {
-    if(op != KW_IF) {
+    if(op != TK_IF) {
         return node_error(lex, "'if' statement syntax error");
     }
 
@@ -288,10 +288,31 @@ node_t* node_if(lexer_t *lex, token_type_t op) {
     next_token(lex);
     node_t *expr_true = node_expr(lex, node_handler[op].lbp);
     if(!expr_true) return NULL;
+    
+    next_token(lex);
+    node_t *expr_false = NULL;
+    if(lex->token.type == TK_END){
+        cond->child = expr_true;
+        return cond;
+    }
+    else if(lex->token.type == TK_ELSE){
+        expr_false = node_expr(lex, node_handler[op].lbp);
+    }
+    else if(lex->token.type == TK_ELIF){
+        expr_false = node_if(lex, node_handler[op].lbp);
+    }
+    else{
+        return node_error(lex, "'if' statement syntax error");
+    }
+    if(!expr_false) return NULL;
 
     next_token(lex);
-    node_t *expr_false = node_expr(lex, node_handler[op].lbp);
-    if(!expr_false) return NULL;
+    if(lex->token.type != TK_END){
+        return node_error(lex, "'if' statement syntax error: 'end' missing");
+    }
+
+    cond->child = expr_true;
+    expr_true->next = expr_false;
 
     return cond;
 }
@@ -645,7 +666,7 @@ void execute(dbuffer_t *db, ibuffer_t *ib){
         &&op_halt, &&op_load, &&op_add, &&op_sub,
         &&op_mult, &&op_div, &&op_idiv, &&op_mod,
         &&op_neg, &&op_band, &&op_bor, &&op_bxor, 
-        &&op_bnot, &&op_call, &&op_print
+        &&op_bnot, &&op_not, &&op_call, &&op_print
     };
 
     #define NEXT() goto *op_table[ib->inst[++pc].opcode]
@@ -725,12 +746,12 @@ int main(int argc, char *argv[]) {
         node_t *root = parse(line, &data_buf);
         if(root){
             node_print(root, &data_buf, 0);
-            ibuffer_t code_buf = {0};
-            comp_node(root, &code_buf);
-            ib_write(&code_buf, OP_PRINT, 0);
-            ib_write(&code_buf, OP_HALT, 0);
-            execute(&data_buf, &code_buf);
-            ib_free(&code_buf);
+            //ibuffer_t code_buf = {0};
+            //comp_node(root, &code_buf);
+            //ib_write(&code_buf, OP_PRINT, 0);
+            //ib_write(&code_buf, OP_HALT, 0);
+            //execute(&data_buf, &code_buf);
+            //ib_free(&code_buf);
             node_free(root); 
         }
         db_free(&data_buf);
