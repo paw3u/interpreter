@@ -95,12 +95,14 @@ void next_token(lexer_t *lex) {
 *   Tworzenie Lexera
 */
 
-lexer_t lexer(char *str, dbuffer_t *data) {
+lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb) {
     lexer_t lex;
     lex.source = str;
     lex.pos = lex.source;
     lex.error = 0;
-    lex.data = data;
+    lex.db = db;
+    lex.ib = ib;
+    lex.fb = fb;
     next_token(&lex);
     return lex;
 }
@@ -130,8 +132,6 @@ node_handler_t node_handler[] = {
     [TK_XOR]    = { NULL,       node_binop,     30 },
     [TK_TILDE]  = { node_unop,  NULL,           30 },
 };
-
-
 
 /*
 *   Tablica zmiennych globalnych
@@ -201,15 +201,16 @@ node_t* node_val(lexer_t *lex) {
         case TK_NUM:
             node->val.type = type_num;
             node->val.size = sizeof(double);
-            node->val.addr = lex->data->size;
-            db_write(lex->data, &lex->token.num, sizeof(double));
+            node->val.addr = lex->db->size;
+            ib_write(lex->ib, OP_LOAD, lex->db->size);
+            db_write(lex->db, &lex->token.num, sizeof(double));
             break;
         case TK_STR:
             node->val.type = type_str;
             node->val.size = lex->token.len + 1;
-            node->val.addr = lex->data->size;
-            db_write(lex->data, lex->token.start, lex->token.len);
-            db_write_u8(lex->data, 0);
+            node->val.addr = lex->db->size;
+            db_write(lex->db, lex->token.start, lex->token.len);
+            db_write_u8(lex->db, 0);
             break;
         default:
             return NULL;
@@ -243,6 +244,23 @@ node_t* node_binop(lexer_t *lex, node_t *left) {
     node->op = op;
     node->child = left;
     left->next = right;
+    
+    if(!is_num(left->val.type) || !is_num(right->val.type)){
+        return node_error(lex, "Error: invalid operand type");
+    }
+    node->val.type = type_num;
+
+    switch(op){
+        case TK_PLUS: ib_write(lex->ib, OP_ADD, 0); break;
+        case TK_MINUS: ib_write(lex->ib, OP_SUB, 0); break;
+        case TK_STAR: ib_write(lex->ib, OP_MULT, 0); break;
+        case TK_SLASH: ib_write(lex->ib, OP_DIV, 0); break;
+        case TK_AND: ib_write(lex->ib, OP_BAND, 0); break;
+        case TK_OR: ib_write(lex->ib, OP_BOR, 0); break;
+        case TK_XOR: ib_write(lex->ib, OP_BXOR, 0); break;
+        default: break;
+    }
+
     return node;
 }
 
@@ -257,6 +275,18 @@ node_t* node_unop(lexer_t *lex) {
     node_t *node = node_alloc(lex, ND_UNOP);
     node->op = op;
     node->child = expr;
+
+    if(!is_num(expr->val.type)){
+        return node_error(lex, "Error: invalid operand type");
+    }
+    node->val.type = type_num;
+
+    switch(node->op){
+        case TK_MINUS: ib_write(lex->ib, OP_NEG, 0); break;
+        case TK_TILDE: ib_write(lex->ib, OP_BNOT, 0); break;
+        default: break;
+    }
+
     return node;
 }
 
@@ -374,7 +404,7 @@ node_t* node_expr(lexer_t *lex, uint8_t rbp) {
 }
 
 /*
-*   Wydruki błędów parsowania
+*   Wydruki błędów parsowania i kompilacji
 */
 
 node_t* node_error(lexer_t *lex, char *msg){
@@ -388,8 +418,8 @@ node_t* node_error(lexer_t *lex, char *msg){
 *   Wywołanie parsera
 */
 
-node_t* parse(char *expr, dbuffer_t *data) {
-    lexer_t lex = lexer(expr, data);
+node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb) {
+    lexer_t lex = lexer(expr, db, ib, fb);
     if(lex.peek.type == TK_EOF) return NULL;
     node_t *root = node_expr(&lex, 0);
     if(lex.peek.type != TK_EOF) {
@@ -443,7 +473,7 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
             }
             break;
         case ND_IF:
-            fprintf(stdout, "IF\n", keywords[node->op].name);
+            fprintf(stdout, "IF\n");
             node_print(node->child, db, indent + 1);
             next = node->child->next;
             while(next) {
@@ -454,18 +484,6 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
         default:
             break;
     }
-}
-
-/*
-*   Wydruki błędów kompilacji
-*/
-
-void comp_error(node_t *node, char *msg){
-    if(node->type == ND_ID){
-        fprintf(stderr, "%s %.*s [%llu]\n", msg, (int)node->id->len, node->id->name, node->token_pos);
-        return;
-    }
-    fprintf(stderr, "%s [%llu]\n", msg, node->token_pos);
 }
 
 /*
@@ -491,7 +509,7 @@ void set_var(node_t *node, var_tab_t *vars) {
     while(vars[index].name && strncmp(vars[index].name, left->id->name, left->id->len)){
         index = (index + 1) & (VARTAB_SIZE - 1);
         if(index == start) {
-            comp_error(node, "Assignment error: variable table overflow");
+            //comp_error(node, "Assignment error: variable table overflow");
             return;
         }
     }
@@ -522,7 +540,7 @@ void get_var(node_t *node, var_tab_t *vars){
         }
     }
     if(!vars[index].name || overflow){
-        comp_error(node, "Unknown identifier:");
+        //omp_error(node, "Unknown identifier:");
         return;
     }
     node->val.type = vars[index].type;
@@ -568,128 +586,10 @@ void db_free(dbuffer_t *db){
 }
 
 /*
- *  Tablica funkcji kompilacji
- */
-
-comp_fun_t comp_binop[] = {
-    [TK_PLUS] = comp_num_binop,
-    [TK_MINUS] = comp_num_binop,
-    [TK_STAR] = comp_num_binop,
-    [TK_SLASH] = comp_num_binop,
-    [TK_OR] = comp_num_binop,
-    [TK_AND] = comp_num_binop,
-    [TK_XOR] = comp_num_binop,
-    //[TK_COL] = comp_binop_col,
-    //[TK_QUEST] = comp_binop_quest,
-};
-
-comp_fun_t comp_unop[] = {
-    [TK_MINUS] = comp_num_unop,
-    [TK_TILDE] = comp_num_unop,
-};
-
-/*
-*   Kompilacja węzła z wartością stałą
-*/
-
-void comp_node_val(node_t *node, ibuffer_t *ib){
-    switch(node->val.type){
-        case type_num:
-            ib_write(ib, OP_LOAD, node->val.addr);
-            break;
-        case type_arr:
-            return;
-    }
-}
-
-void comp_node_call(node_t *node, ibuffer_t *ib){
-
-}
-
-/*
-*   Kompilacja węzła operacji binarnych na danych liczbowych
-*/
-
-void comp_num_binop(node_t *node, ibuffer_t *ib){
-    node_t *lhs = node->child;
-    node_t *rhs = node->child->next;
-
-    if(!is_num(lhs->val.type) || !is_num(rhs->val.type)){
-        comp_error(node, "Error: invalid operand type");
-        return;
-    }
-    node->val.type = type_num;
-
-    switch(node->op){
-        case TK_PLUS: ib_write(ib, OP_ADD, 0); return;
-        case TK_MINUS: ib_write(ib, OP_SUB, 0); return;
-        case TK_STAR: ib_write(ib, OP_MULT, 0); return;
-        case TK_SLASH: ib_write(ib, OP_DIV, 0); return;
-        case TK_AND: ib_write(ib, OP_BAND, 0); return;
-        case TK_OR: ib_write(ib, OP_BOR, 0); return;
-        case TK_XOR: ib_write(ib, OP_BXOR, 0); return;
-        default: return;
-    }
-}
-
-/*
-*   Kompilacja węzła operacji unarnych na danych liczbowych
-*/
-
-void comp_num_unop(node_t *node, ibuffer_t *ib){
-    node_t *arg = node->child;
-
-    if(!is_num(arg->val.type)){
-        comp_error(node, "Error: invalid operand type");
-        return;
-    }
-    node->val.type = type_num;
-
-    switch(node->op){
-        case TK_MINUS: ib_write(ib, OP_NEG, 0); return;
-        case TK_TILDE: ib_write(ib, OP_BNOT, 0); return;
-        default: return;
-    }
-}
-
-/*
-*   Kompilacja węzła
-*/
-
-void comp_node(node_t *node, ibuffer_t *ib){
-    if(!node) return;
-    switch(node->type) {
-        case ND_VAL:
-            comp_node_val(node, ib);
-            return;
-        case ND_ID:
-            return;
-        case ND_BINOP:
-            comp_node(node->child, ib);
-            comp_node(node->child->next, ib);
-            comp_binop[node->op](node, ib);
-            return;
-        case ND_UNOP:
-            comp_node(node->child, ib);
-            comp_unop[node->op](node, ib);
-            return;
-        case ND_ASSIGN:
-            //set_var(node, var_tab);
-            return;
-        case ND_CALL:
-            comp_node(node->child, ib);
-            comp_node_call(node, ib);
-            return;
-        default:
-            return;
-    }
-}
-
-/*
 *   Maszyna wirtualna wykonująca bytecode
 */
 
-void execute(dbuffer_t *db, ibuffer_t *ib){
+void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb){
     val_t stack[256];
     uint32_t sp = 0;
     uint32_t pc = 0;
@@ -776,18 +676,19 @@ int main(int argc, char *argv[]) {
     while(fgets(line, BUFSIZE, file) != NULL){
         if(strncmp(line, "exit", 4) == 0) break;
         dbuffer_t data_buf = db_create();
-        node_t *root = parse(line, &data_buf);
+        ibuffer_t inst_buf = {0};
+        ibuffer_t fun_buf = {0};
+        node_t *root = parse(line, &data_buf, &inst_buf, &fun_buf);
         if(root){
             node_print(root, &data_buf, 0);
-            //ibuffer_t code_buf = {0};
-            //comp_node(root, &code_buf);
-            //ib_write(&code_buf, OP_PRINT, 0);
-            //ib_write(&code_buf, OP_HALT, 0);
-            //execute(&data_buf, &code_buf);
-            //ib_free(&code_buf);
+            ib_write(&inst_buf, OP_PRINT, 0);
+            ib_write(&inst_buf, OP_HALT, 0);
+            execute(&data_buf, &inst_buf, &fun_buf);
             node_free(root); 
         }
         db_free(&data_buf);
+        ib_free(&inst_buf);
+        ib_free(&fun_buf);
         if(file == stdin) fprintf(stdout, ">> ");
     }
     if(file != stdin) fclose(file);

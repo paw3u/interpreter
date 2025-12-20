@@ -17,6 +17,7 @@ typedef enum {
     OP_BOR,
     OP_BXOR,
     OP_BNOT,
+    OP_NOT,
     OP_CALL,
     OP_PRINT,
 } opcode_t;
@@ -87,11 +88,13 @@ typedef struct {
     token_t token;
     token_t peek;
     uint8_t error;
-    dbuffer_t *data;
+    dbuffer_t *db;
+    ibuffer_t *ib;
+    ibuffer_t *fb;
 } lexer_t;
 
 void next_token(lexer_t *lex);
-lexer_t lexer(char *str, dbuffer_t *data);
+lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb);
 
 typedef enum {
     ND_BINOP,
@@ -171,7 +174,6 @@ struct node_t {
 typedef node_t* (*prefix_fun_t)(lexer_t *lex);
 typedef node_t* (*infix_fun_t)(lexer_t *lex, node_t *node);
 typedef void (*op_fun_t)(node_t *node);
-typedef void (*comp_fun_t)(node_t *node, ibuffer_t *ib);
 
 typedef struct {
     const char *name;
@@ -180,8 +182,6 @@ typedef struct {
 } keyword_t;
 
 typedef enum {
-    //KW_SIN,
-    //KW_COS,
     KW_IF,
     KW_THEN,
     KW_ELSE,
@@ -216,18 +216,13 @@ node_t* node_if(lexer_t *lex);
 node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, uint8_t rbp);
 node_t* node_error(lexer_t *lex, char *msg);
-uint32_t hash(const char *str, size_t len, uint32_t seed);
+node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb);
 void node_print(node_t *node, dbuffer_t *db, int indent);
 
-void comp_node_val(node_t *node, ibuffer_t *ib);
-void comp_num_binop(node_t *node, ibuffer_t *ib);
-void comp_num_unop(node_t *node, ibuffer_t *ib);
-void comp_node(node_t *node, ibuffer_t *ib);
-void comp_error(node_t *node, char *msg);
-
+uint32_t hash(const char *str, size_t len, uint32_t seed);
 void set_var(node_t *node, var_tab_t *vars);
 void get_var(node_t *node, var_tab_t *vars);
 
-node_t* parse(char *expr, dbuffer_t *data);
+void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb);
 
 #endif
