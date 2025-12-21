@@ -30,6 +30,8 @@ typedef enum {
     OP_VSET,
     OP_VSETN,
     OP_VGET,
+    OP_JUMP,
+    OP_JUMPIF,
 } opcode_t;
 
 typedef struct {

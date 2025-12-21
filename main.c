@@ -365,6 +365,9 @@ node_t* node_if(lexer_t *lex) {
     uint8_t lbp = node_handler[TK_IF].lbp;
     node_t *cond = node_expr(lex, lbp);
     if(!cond) return NULL;
+
+    uint32_t jump_idx = lex->ib->count;
+    ib_write(lex->ib, OP_JUMPIF, 0);
     
     node_t *node = node_alloc(lex, ND_IF);
     node->child = cond;
@@ -380,6 +383,10 @@ node_t* node_if(lexer_t *lex) {
         return NULL;
     }
     cond->next = expr_true;
+
+    lex->ib->inst[jump_idx].arg0 = lex->ib->count + 1;
+    jump_idx = lex->ib->count;
+    ib_write(lex->ib, OP_JUMP, 0);
 
     next_token(lex);
     node_t *expr_false = NULL;
@@ -403,6 +410,8 @@ node_t* node_if(lexer_t *lex) {
         return NULL;
     }
     expr_true->next = expr_false;
+
+    lex->ib->inst[jump_idx].arg0 = lex->ib->count;
 
     if(elif) return node;
 
@@ -608,7 +617,7 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
         &&op_bnot, &&op_not, &&op_call, &&op_print,
         &&op_and, &&op_or, &&op_lt, &&op_le,
         &&op_gt, &&op_ge, &&op_eq, &&op_vset,
-        &&op_vsetn, &&op_vget
+        &&op_vsetn, &&op_vget, &&op_jump, &&op_jumpif
     };
 
     #define NEXT() goto *op_table[ib->inst[++pc].opcode]
@@ -692,6 +701,15 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
         NEXT();
     op_vget:
         stack[sp++].num = vb[arg0].val.num;
+        NEXT();
+    op_jump:
+        pc = arg0;
+        goto *op_table[ib->inst[pc].opcode];
+    op_jumpif:
+        if(!stack[--sp].num){
+            pc = arg0;
+            goto *op_table[ib->inst[pc].opcode];
+        }
         NEXT();
 }
 
