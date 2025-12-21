@@ -20,11 +20,22 @@ typedef enum {
     OP_NOT,
     OP_CALL,
     OP_PRINT,
+    OP_AND,
+    OP_OR,
+    OP_LT,
+    OP_LE,
+    OP_GT,
+    OP_GE,
+    OP_EQ,
+    OP_VSET,
+    OP_VSETN,
+    OP_VGET,
 } opcode_t;
 
 typedef struct {
     uint32_t opcode;
-    uint32_t arg;
+    uint32_t arg0;
+    uint32_t arg1;
 } inst_t;
 
 typedef struct {
@@ -33,8 +44,10 @@ typedef struct {
     inst_t *inst;
 } ibuffer_t;
 
-void ib_write(ibuffer_t *ib, uint32_t opcode, uint32_t arg);
-void ib_free(ibuffer_t *db);
+void ib_writex(ibuffer_t *ib, uint32_t opcode, uint32_t arg0, uint32_t arg1);
+void ib_free(ibuffer_t *ib);
+
+#define ib_write(ib, opcode, arg) ib_writex(ib, opcode, arg, 0);
 
 typedef struct {
     size_t size;
@@ -50,21 +63,38 @@ void db_free(dbuffer_t *db);
 #define db_write_u16(db, val) do { uint16_t _v = (val); db_write(db, &_v, 2); } while(0)
 #define db_write_u8(db, val) do { uint8_t  _v = (val); db_write(db, &_v, 1); } while(0)
 
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    union {
+        double num;
+        void *addr;
+    };
+} val_t;
+
+typedef struct {
+    char *name;
+    val_t val;
+} var_t;
+
+#define VARS_SIZE 256
+
 typedef enum {
     TK_EOF = 0,
     TK_PLUS     = '+',
     TK_MINUS    = '-',
     TK_STAR     = '*',
     TK_SLASH    = '/',
-    TK_AND      = '&',
-    TK_OR       = '|',
-    TK_XOR      = '^',
+    TK_BAND     = '&',
+    TK_BOR      = '|',
+    TK_BXOR     = '^',
     TK_TILDE    = '~',
     TK_LPAREN   = '(',
     TK_RPAREN   = ')',
     TK_EQ       = '=',
-    TK_QUEST    = '?',
-    TK_COL      = ':',
+    TK_LT       = '<',
+    TK_GT       = '>',
+    TK_EXC      = '!',
     TK_NUM      = 256,
     TK_STR,
     TK_ID,
@@ -72,6 +102,11 @@ typedef enum {
     TK_THEN,
     TK_ELSE,
     TK_ELIF,
+    TK_LE,
+    TK_GE,
+    TK_EQEQ,
+    TK_AND,
+    TK_OR,
     TK_END,
 } token_type_t;
 
@@ -88,13 +123,15 @@ typedef struct {
     token_t token;
     token_t peek;
     uint8_t error;
+    uint8_t eval;
     dbuffer_t *db;
     ibuffer_t *ib;
     ibuffer_t *fb;
+    var_t *vb;
 } lexer_t;
 
 void next_token(lexer_t *lex);
-lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb);
+lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb);
 
 typedef enum {
     ND_BINOP,
@@ -136,17 +173,6 @@ typedef enum {
  *  Do ustalenia jak to ma działać dla danych tablicowych...
  */
 
-// Typ przechowywany na stosie - do wykonywania kodu
-typedef struct {
-    uint32_t type;
-    uint32_t size;
-    union {
-        double num;
-        void *addr;
-    };
-} val_t;
-
-// Typ przechowywany w węźle
 typedef struct {
     uint32_t type;
     uint32_t size;
@@ -187,6 +213,8 @@ typedef enum {
     KW_ELSE,
     KW_ELIF,
     KW_END,
+    KW_AND,
+    KW_OR,
     KEYWORDS_NUM,
 } keyword_type_t;
 
@@ -196,15 +224,10 @@ typedef struct {
     uint8_t lbp;
 } node_handler_t;
 
-typedef struct {
-    char *name;
-    uint32_t type;
-    val_t val;
-} var_tab_t;
-
 node_t* node_alloc(lexer_t *lex, node_type_t type);
 void node_free(node_t *node) ;
 void alloc_str(void **dst, char *src, size_t count);
+uint32_t hash(const char *str, size_t len, uint32_t seed);
 
 node_t* node_group(lexer_t *lex);
 node_t* node_val(lexer_t *lex);
@@ -216,13 +239,9 @@ node_t* node_if(lexer_t *lex);
 node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, uint8_t rbp);
 node_t* node_error(lexer_t *lex, char *msg);
-node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb);
+node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb);
 void node_print(node_t *node, dbuffer_t *db, int indent);
 
-uint32_t hash(const char *str, size_t len, uint32_t seed);
-void set_var(node_t *node, var_tab_t *vars);
-void get_var(node_t *node, var_tab_t *vars);
-
-void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb);
+void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb);
 
 #endif

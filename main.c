@@ -9,8 +9,8 @@
 #include "main.h"
 
 /*
-*   Słowa kluczowe
-*/
+ *  Słowa kluczowe
+ */
 
 keyword_t keywords[] = {
     [KW_IF]     = { "if",       TK_IF,      NULL },
@@ -18,11 +18,13 @@ keyword_t keywords[] = {
     [KW_ELSE]   = { "else",     TK_ELSE,    NULL },
     [KW_ELIF]   = { "elif",     TK_ELIF,    NULL },
     [KW_END]    = { "end",      TK_END,     NULL },
+    [KW_AND]    = { "and",      TK_AND,     NULL },
+    [KW_OR ]    = { "or",       TK_OR,      NULL },
 };
 
 /*
-*   Przejście do kolejnego tokenu
-*/
+ *  Przejście do kolejnego tokenu
+ */
 
 void next_token(lexer_t *lex) {
     lex->token = lex->peek;
@@ -48,27 +50,12 @@ void next_token(lexer_t *lex) {
         return;
     }
     if(isalpha(c)) {
-        while(isalpha(*lex->pos)) lex->pos++;
+        while(isalnum(*lex->pos)) lex->pos++;
         lex->peek.len = lex->pos - lex->peek.start;
         for(size_t i = 0; i < KEYWORDS_NUM; i++) {
             if(!strncmp(keywords[i].name, lex->peek.start, strlen(keywords[i].name))){
-                switch(i) {
-                    case KW_IF:
-                        lex->peek.type = TK_IF;
-                        return;
-                    case KW_THEN:
-                        lex->peek.type = TK_THEN;
-                        return;
-                    case KW_ELSE:
-                        lex->peek.type = TK_ELSE;
-                        return;
-                    case KW_ELIF:
-                        lex->peek.type = TK_ELIF;
-                        return;
-                    case KW_END:
-                        lex->peek.type = TK_END;
-                        return;
-                }
+                lex->peek.type = keywords[i].token;
+                return;
             }
         }
         lex->peek.type = TK_ID;
@@ -87,29 +74,49 @@ void next_token(lexer_t *lex) {
         lex->pos++;
         return;
     }
+    else if(c == '>' && *lex->pos == '='){
+        lex->peek.type = TK_GE;
+        lex->pos++;
+        lex->peek.len = lex->pos - lex->peek.start;
+        return;
+    }
+    else if(c == '<' && *lex->pos == '='){
+        lex->peek.type = TK_LE;
+        lex->pos++;
+        lex->peek.len = lex->pos - lex->peek.start;
+        return;
+    }
+    else if(c == '=' && *lex->pos == '='){
+        lex->peek.type = TK_EQEQ;
+        lex->pos++;
+        lex->peek.len = lex->pos - lex->peek.start;
+        return;
+    }
 
     lex->peek.type = c;
 }
 
 /*
-*   Tworzenie Lexera
-*/
+ *  Tworzenie Lexera
+ */
 
-lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb) {
+lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb) {
     lexer_t lex;
     lex.source = str;
     lex.pos = lex.source;
     lex.error = 0;
+    lex.eval = 0;
     lex.db = db;
     lex.ib = ib;
     lex.fb = fb;
+    lex.vb = vb;
     next_token(&lex);
     return lex;
 }
 
 /*
-*   Parametry operatorów: handlery prefix, infix, moc wiązania
-*/
+ *  Parametry operatorów: handlery prefix, infix, moc wiązania
+ */
 
 node_handler_t node_handler[] = {
     [TK_NUM]    = { node_val,   NULL,           0  },
@@ -117,32 +124,44 @@ node_handler_t node_handler[] = {
     [TK_ID]     = { node_id,    NULL,           0  },
     [TK_LPAREN] = { node_group, NULL,           0  },
     [TK_RPAREN] = { NULL,       NULL,           0  },
-    [TK_IF]     = { node_if,    NULL,           8  },
-    [TK_THEN]   = { NULL,       NULL,           8  },
-    [TK_ELSE]   = { NULL,       NULL,           8  },
-    [TK_ELIF]   = { NULL,       NULL,           8  },
-    [TK_END]    = { NULL,       NULL,           8  },
-    [TK_EQ]     = { NULL,       node_assign,    9  },
+    [TK_IF]     = { node_if,    NULL,           1  },
+    [TK_THEN]   = { NULL,       NULL,           1  },
+    [TK_ELSE]   = { NULL,       NULL,           1  },
+    [TK_ELIF]   = { NULL,       NULL,           1  },
+    [TK_END]    = { NULL,       NULL,           1  },
+    [TK_EQ]     = { NULL,       node_assign,    7  },
+    [TK_AND]    = { NULL,       node_binop,     8  },
+    [TK_OR]     = { NULL,       node_binop,     8  },
+    [TK_EXC]    = { node_unop,  NULL,           8  },
+    [TK_LT]     = { NULL,       node_binop,     9  },
+    [TK_GT]     = { NULL,       node_binop,     9  },
+    [TK_LE]     = { NULL,       node_binop,     9  },
+    [TK_GE]     = { NULL,       node_binop,     9  },
+    [TK_EQEQ]   = { NULL,       node_binop,     9  },
     [TK_PLUS]   = { NULL,       node_binop,     10 },
     [TK_MINUS]  = { node_unop,  node_binop,     10 },
     [TK_STAR]   = { NULL,       node_binop,     20 },
     [TK_SLASH]  = { NULL,       node_binop,     20 },
-    [TK_AND]    = { NULL,       node_binop,     30 },
-    [TK_OR]     = { NULL,       node_binop,     30 },
-    [TK_XOR]    = { NULL,       node_binop,     30 },
+    [TK_BAND]   = { NULL,       node_binop,     30 },
+    [TK_BOR]    = { NULL,       node_binop,     30 },
+    [TK_BXOR]   = { NULL,       node_binop,     30 },
     [TK_TILDE]  = { node_unop,  NULL,           30 },
 };
 
 /*
-*   Tablica zmiennych globalnych
-*/
+ *  Funkcja hashująca ukradziona z Lua
+ */
 
-#define VARTAB_SIZE (1 << 8) 
-static var_tab_t var_tab[VARTAB_SIZE] = {0};
+uint32_t hash(const char *str, size_t len, uint32_t seed) {
+    uint32_t h = seed ^ (uint32_t)(len);
+    for(; len > 0; len--)
+        h ^= ((h << 5) + (h >> 2) + (uint8_t)(str[len - 1]));
+    return h;
+}
 
 /*
-*   Alokacja pamięci węzła
-*/
+ *  Alokacja pamięci węzła
+ */
 
 node_t* node_alloc(lexer_t *lex, node_type_t type) {
     node_t *node = (node_t*) calloc(1, sizeof(node_t));
@@ -153,8 +172,8 @@ node_t* node_alloc(lexer_t *lex, node_type_t type) {
 }
 
 /*
-*   Zwalnianie pamięci drzewa
-*/
+ *  Zwalnianie pamięci drzewa
+ */
 
 void node_free(node_t *node) {
     while(node){
@@ -167,8 +186,8 @@ void node_free(node_t *node) {
 }
 
 /*
-*   Węzeł grupowania
-*/
+ *  Węzeł grupowania
+ */
 
 node_t* node_group(lexer_t *lex) {
     node_t *expr = node_expr(lex, 0);
@@ -181,8 +200,8 @@ node_t* node_group(lexer_t *lex) {
 }
 
 /*
-*   Funkcje pomocnicze do alokacji danych
-*/
+ *  Funkcje pomocnicze do alokacji danych
+ */
 
 void alloc_str(void **dst, char *src, size_t count){
     if(*dst) free(*dst);
@@ -192,8 +211,8 @@ void alloc_str(void **dst, char *src, size_t count){
 }
 
 /*
-*   Węzeł z wartością przekazaną wprost
-*/
+ *  Węzeł z wartością przekazaną wprost
+ */
 
 node_t* node_val(lexer_t *lex) {
     node_t *node = node_alloc(lex, ND_VAL);
@@ -219,8 +238,8 @@ node_t* node_val(lexer_t *lex) {
 }
 
 /*
-*   Węzeł identyfikatora
-*/
+ *  Węzeł identyfikatora
+ */
 
 node_t* node_id(lexer_t *lex) {
     node_t *node = node_alloc(lex, ND_ID);
@@ -228,12 +247,30 @@ node_t* node_id(lexer_t *lex) {
     if(!node->id) exit(ENOMEM);
     node->id->name = lex->token.start;
     node->id->len = lex->token.len;
+
+    size_t index = hash(node->id->name, node->id->len, (intptr_t)lex->vb) & (VARS_SIZE - 1);
+    size_t start = index;
+    uint8_t overflow = 0;
+    while(lex->vb[index].name && strncmp(lex->vb[index].name, node->id->name, node->id->len)){
+        index = (index + 1) & (VARS_SIZE - 1);
+        if(index == start) {
+            overflow = 1;
+            break;
+        }
+    }
+    if(!lex->vb[index].name || overflow){
+        if(!lex->eval) return node;
+        return node_error(lex, "Unknown identifier"); 
+    }
+    node->val.type = type_num; // Na razie tylko liczby jako zmienne
+    ib_write(lex->ib, OP_VGET, index);
+
     return node; 
 }
 
 /*
-*   Węzeł oparcji binarnej
-*/
+ *  Węzeł oparcji binarnej
+ */
 
 node_t* node_binop(lexer_t *lex, node_t *left) {
     next_token(lex);
@@ -255,9 +292,16 @@ node_t* node_binop(lexer_t *lex, node_t *left) {
         case TK_MINUS: ib_write(lex->ib, OP_SUB, 0); break;
         case TK_STAR: ib_write(lex->ib, OP_MULT, 0); break;
         case TK_SLASH: ib_write(lex->ib, OP_DIV, 0); break;
-        case TK_AND: ib_write(lex->ib, OP_BAND, 0); break;
-        case TK_OR: ib_write(lex->ib, OP_BOR, 0); break;
-        case TK_XOR: ib_write(lex->ib, OP_BXOR, 0); break;
+        case TK_BAND: ib_write(lex->ib, OP_BAND, 0); break;
+        case TK_BOR: ib_write(lex->ib, OP_BOR, 0); break;
+        case TK_BXOR: ib_write(lex->ib, OP_BXOR, 0); break;
+        case TK_AND: ib_write(lex->ib, OP_AND, 0); break;
+        case TK_OR: ib_write(lex->ib, OP_OR, 0); break;
+        case TK_LT: ib_write(lex->ib, OP_LT, 0); break;
+        case TK_LE: ib_write(lex->ib, OP_LE, 0); break;
+        case TK_GT: ib_write(lex->ib, OP_GT, 0); break;
+        case TK_GE: ib_write(lex->ib, OP_GE, 0); break;
+        case TK_EQEQ: ib_write(lex->ib, OP_EQ, 0); break;
         default: break;
     }
 
@@ -265,8 +309,8 @@ node_t* node_binop(lexer_t *lex, node_t *left) {
 }
 
 /*
-*   Węzeł operacji unarnej
-*/
+ *  Węzeł operacji unarnej
+ */
 
 node_t* node_unop(lexer_t *lex) {
     token_type_t op = lex->token.type;
@@ -284,6 +328,7 @@ node_t* node_unop(lexer_t *lex) {
     switch(node->op){
         case TK_MINUS: ib_write(lex->ib, OP_NEG, 0); break;
         case TK_TILDE: ib_write(lex->ib, OP_BNOT, 0); break;
+        case TK_EXC: ib_write(lex->ib, OP_NOT, 0); break;
         default: break;
     }
 
@@ -291,8 +336,8 @@ node_t* node_unop(lexer_t *lex) {
 }
 
 /*
-*   Węzeł wywołania funkcji
-*/
+ *  Węzeł wywołania funkcji
+ */
 
 node_t* node_call(lexer_t *lex, uint8_t kw) {
     next_token(lex);
@@ -308,8 +353,8 @@ node_t* node_call(lexer_t *lex, uint8_t kw) {
 }
 
 /*
-*   Węzeł instrukcji warunkowej
-*/
+ *  Węzeł instrukcji warunkowej
+ */
 
 node_t* node_if(lexer_t *lex) {
     if(lex->token.type != TK_IF && lex->token.type != TK_ELIF) {
@@ -371,25 +416,44 @@ node_t* node_if(lexer_t *lex) {
 }
 
 /*
-*   Węzeł przypisania
-*/
+ *  Węzeł przypisania
+ */
 
 node_t* node_assign(lexer_t *lex, node_t *left) {
     next_token(lex);
     if(left->type != ND_ID) return node_error(lex, "Assignment error");
+    lex->eval = 1;
     token_type_t op = lex->token.type;
     node_t *right = node_expr(lex, node_handler[op].lbp);
-    if(!right) return NULL;
+    if(!right || !is_num(right->val.type)) {
+        return node_error(lex, "Assignment error"); // Na razie tylko liczby jako zmienne
+    }
     node_t *node = node_alloc(lex, ND_ASSIGN);
     node->op = op;
     node->child = left;
     left->next = right;
+
+    size_t index = hash(left->id->name, left->id->len, (intptr_t)lex->vb) & (VARS_SIZE - 1);
+    size_t start = index;
+    while(lex->vb[index].name && strncmp(lex->vb[index].name, left->id->name, left->id->len)){
+        index = (index + 1) & (VARS_SIZE - 1);
+        if(index == start) {
+            return node_error(lex, "Assignment error: variable array overflow");
+        }
+    }
+    if(!lex->vb[index].name) {
+        ib_writex(lex->ib, OP_VSETN, index, lex->db->size);
+        db_write(lex->db, left->id->name, left->id->len);
+        db_write_u8(lex->db, 0);
+        return node;
+    }
+    ib_write(lex->ib, OP_VSET, index);
     return node;
 }
 
 /*
-*   Główna funkcja rekurencyjnego parsowania wyrażenia
-*/
+ *  Główna funkcja rekurencyjnego parsowania wyrażenia
+ */
 
 node_t* node_expr(lexer_t *lex, uint8_t rbp) {
     next_token(lex);
@@ -404,8 +468,8 @@ node_t* node_expr(lexer_t *lex, uint8_t rbp) {
 }
 
 /*
-*   Wydruki błędów parsowania i kompilacji
-*/
+ *  Wydruki błędów parsowania i kompilacji
+ */
 
 node_t* node_error(lexer_t *lex, char *msg){
     if(lex->error) return NULL;
@@ -415,11 +479,11 @@ node_t* node_error(lexer_t *lex, char *msg){
 }
 
 /*
-*   Wywołanie parsera
-*/
+ *  Wywołanie parsera
+ */
 
-node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb) {
-    lexer_t lex = lexer(expr, db, ib, fb);
+node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb) {
+    lexer_t lex = lexer(expr, db, ib, fb, vb);
     if(lex.peek.type == TK_EOF) return NULL;
     node_t *root = node_expr(&lex, 0);
     if(lex.peek.type != TK_EOF) {
@@ -430,8 +494,8 @@ node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb) {
 }
 
 /*
-*   Wydruk drzewa
-*/
+ *  Wydruk drzewa
+ */
 
 void node_print(node_t *node, dbuffer_t *db, int indent) {
     if(!node) return;
@@ -455,7 +519,7 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
             break;
         case ND_BINOP:
         case ND_ASSIGN:
-            fprintf(stdout, "BINOP %c\n", node->op);
+            fprintf(stdout, "BINOP %d:%c\n", node->op, node->op < 256 ? node->op : '\0');
             node_print(node->child, db, indent + 1);
             node_print(node->child->next, db, indent + 1);
             break;
@@ -486,76 +550,18 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
     }
 }
 
-/*
-*   Funkcja hashująca ukradziona z Lua
-*/
 
-uint32_t hash(const char *str, size_t len, uint32_t seed) {
-    uint32_t h = seed ^ (uint32_t)(len);
-    for(; len > 0; len--)
-        h ^= ((h << 5) + (h >> 2) + (uint8_t)(str[len - 1]));
-    return h;
-}
-
-/*
-*   Globalne zmienne liczbowe
-*/
-
-void set_var(node_t *node, var_tab_t *vars) {
-    node_t *left = node->child;
-    node_t *right = node->child->next;
-    size_t index = hash(left->id->name, left->id->len, (intptr_t)vars) & (VARTAB_SIZE - 1);
-    size_t start = index;
-    while(vars[index].name && strncmp(vars[index].name, left->id->name, left->id->len)){
-        index = (index + 1) & (VARTAB_SIZE - 1);
-        if(index == start) {
-            //comp_error(node, "Assignment error: variable table overflow");
-            return;
-        }
-    }
-    //node_eval(right);
-    if(is_nil(right->val.type)) return;
-
-    if(!vars[index].name) {
-        vars[index].name = (char*) calloc(left->id->len + 1, sizeof(char));
-        memcpy(vars[index].name, left->id->name, left->id->len);
-    }
-
-    if(is_str(right->val.type)){
-        //alloc_str(&vars[index].val.addr, right->val.addr, right->val.arr.count);
-        return;
-    }
-    vars[index].type = right->val.type;
-}
-
-void get_var(node_t *node, var_tab_t *vars){
-    size_t index = hash(node->id->name, node->id->len, (intptr_t)vars) & (VARTAB_SIZE - 1);
-    size_t start = index;
-    uint8_t overflow = 0;
-    while(vars[index].name && strncmp(vars[index].name, node->id->name, node->id->len)){
-        index = (index + 1) & (VARTAB_SIZE - 1);
-        if(index == start){
-            overflow = 1;
-            break;
-        }
-    }
-    if(!vars[index].name || overflow){
-        //omp_error(node, "Unknown identifier:");
-        return;
-    }
-    node->val.type = vars[index].type;
-}
 
 /*
  *  Bufor instrukcji
  */
 
-void ib_write(ibuffer_t *ib, uint32_t opcode, uint32_t arg){
+void ib_writex(ibuffer_t *ib, uint32_t opcode, uint32_t arg0, uint32_t arg1){
     if(ib->count >= ib->capacity) {
         ib->capacity = ib->capacity ? ib->capacity * 2 : 256;
         ib->inst = realloc(ib->inst, ib->capacity * sizeof(inst_t));
     }
-    ib->inst[ib->count++] = (inst_t){opcode, arg};
+    ib->inst[ib->count++] = (inst_t){opcode, arg0, arg1};
 }
 
 void ib_free(ibuffer_t *ib){
@@ -586,10 +592,10 @@ void db_free(dbuffer_t *db){
 }
 
 /*
-*   Maszyna wirtualna wykonująca bytecode
-*/
+ *  Maszyna wirtualna wykonująca bytecode
+ */
 
-void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb){
+void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
     val_t stack[256];
     uint32_t sp = 0;
     uint32_t pc = 0;
@@ -599,18 +605,22 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb){
         &&op_halt, &&op_load, &&op_add, &&op_sub,
         &&op_mult, &&op_div, &&op_idiv, &&op_mod,
         &&op_neg, &&op_band, &&op_bor, &&op_bxor, 
-        &&op_bnot, &&op_not, &&op_call, &&op_print
+        &&op_bnot, &&op_not, &&op_call, &&op_print,
+        &&op_and, &&op_or, &&op_lt, &&op_le,
+        &&op_gt, &&op_ge, &&op_eq, &&op_vset,
+        &&op_vsetn, &&op_vget
     };
 
     #define NEXT() goto *op_table[ib->inst[++pc].opcode]
-    #define arg ib->inst[pc].arg
+    #define arg0 ib->inst[pc].arg0
+    #define arg1 ib->inst[pc].arg1
 
     goto *op_table[ib->inst[0].opcode];
 
     op_halt:
         return;
     op_load:
-        stack[sp++].num = *(double*)(db->data + arg);
+        stack[sp++].num = *(double*)(db->data + arg0);
         NEXT();
     op_add:
         stack[sp-2].num = stack[sp-2].num + stack[sp-1].num; sp--;
@@ -652,11 +662,42 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb){
     op_print:
         fprintf(stdout, "%g\n", stack[--sp].num);
         NEXT();
+    op_and:
+        stack[sp-2].num = stack[sp-2].num && stack[sp-1].num; sp--;
+        NEXT();
+    op_or:
+        stack[sp-2].num = stack[sp-2].num || stack[sp-1].num; sp--;
+        NEXT();
+    op_lt:
+        stack[sp-2].num = stack[sp-2].num < stack[sp-1].num; sp--;
+        NEXT();
+    op_le:
+        stack[sp-2].num = stack[sp-2].num <= stack[sp-1].num; sp--;
+        NEXT();
+    op_gt:
+        stack[sp-2].num = stack[sp-2].num > stack[sp-1].num; sp--;
+        NEXT();
+    op_ge:
+        stack[sp-2].num = stack[sp-2].num >= stack[sp-1].num; sp--;
+        NEXT();
+    op_eq:
+        stack[sp-2].num = stack[sp-2].num == stack[sp-1].num; sp--;
+        NEXT();
+    op_vset:
+        vb[arg0].val = stack[--sp];
+        NEXT();
+    op_vsetn:
+        vb[arg0].name = (char*) &db->data[arg1];
+        vb[arg0].val = stack[--sp];
+        NEXT();
+    op_vget:
+        stack[sp++].num = vb[arg0].val.num;
+        NEXT();
 }
 
 /*
-*   Main
-*/
+ *  Main
+ */
 
 #define BUFSIZE 256
 
@@ -672,25 +713,28 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    var_t vars[VARS_SIZE] = {0};
+    dbuffer_t data_buf = db_create();
+
     if(file == stdin) fprintf(stdout, ">> ");
     while(fgets(line, BUFSIZE, file) != NULL){
         if(strncmp(line, "exit", 4) == 0) break;
-        dbuffer_t data_buf = db_create();
         ibuffer_t inst_buf = {0};
         ibuffer_t fun_buf = {0};
-        node_t *root = parse(line, &data_buf, &inst_buf, &fun_buf);
+        node_t *root = parse(line, &data_buf, &inst_buf, &fun_buf, vars);
         if(root){
             node_print(root, &data_buf, 0);
-            ib_write(&inst_buf, OP_PRINT, 0);
+            if(is_num(root->val.type)) ib_write(&inst_buf, OP_PRINT, 0);
             ib_write(&inst_buf, OP_HALT, 0);
-            execute(&data_buf, &inst_buf, &fun_buf);
+            execute(&data_buf, &inst_buf, &fun_buf, vars);
             node_free(root); 
         }
-        db_free(&data_buf);
+        
         ib_free(&inst_buf);
         ib_free(&fun_buf);
         if(file == stdin) fprintf(stdout, ">> ");
     }
+    db_free(&data_buf);
     if(file != stdin) fclose(file);
 
     return 0;
