@@ -13,11 +13,12 @@
  */
 
 keyword_t keywords[] = {
-    [KW_IF]     = { "if",       TK_IF   },
-    [KW_ELSE]   = { "else",     TK_ELSE },
-    [KW_AND]    = { "and",      TK_AND  },
-    [KW_OR]     = { "or",       TK_OR   },
-    [KW_OUT]    = { "out",      TK_CALL },
+    [KW_IF]     = { "if",       TK_IF    },
+    [KW_ELSE]   = { "else",     TK_ELSE  },
+    [KW_AND]    = { "and",      TK_AND   },
+    [KW_OR]     = { "or",       TK_OR    },
+    [KW_WHILE]  = { "while",    TK_WHILE },
+    [KW_OUT]    = { "out",      TK_CALL  },
 };
 
 /*
@@ -129,6 +130,7 @@ node_handler_t node_handler[] = {
     [TK_RPAREN] = { NULL,       NULL,           1  },
     [TK_IF]     = { node_if,    NULL,           6  },
     [TK_ELSE]   = { NULL,       NULL,           6  },
+    [TK_WHILE]  = { node_while, NULL,           6  },
     [TK_EQ]     = { NULL,       node_assign,    7  },
     [TK_AND]    = { NULL,       node_binop,     8  },
     [TK_OR]     = { NULL,       node_binop,     8  },
@@ -442,6 +444,47 @@ node_t* node_if(lexer_t *lex) {
 }
 
 /*
+ *  Węzeł pętli while
+ */
+
+node_t* node_while(lexer_t *lex) {
+    next_token(lex);
+    if(lex->token.type != TK_LPAREN){
+        return node_error(lex, "'if' statement syntax error");
+    }
+
+    uint32_t loop_start = lex->ib->count;
+
+    node_t *cond = node_group(lex);
+    if(!node_eval(lex, cond)) return NULL;
+
+    uint32_t fjump_idx = lex->ib->count;
+    ib_write(lex->ib, OP_FJUMP, 0);
+ 
+    node_t *node = node_alloc(lex, ND_WHILE);
+    node->child = cond;
+
+    next_token(lex);
+    node_t *loop = NULL;
+    if(lex->token.type != TK_LBRACE){
+        node_free(node);
+        return node_error(lex, "'while' syntax error");
+    }
+    loop = node_block(lex);
+    if(!loop){
+        node_free(node);
+        return NULL;
+    }
+    cond->next = loop;
+
+    ib_write(lex->ib, OP_JUMP, loop_start);
+    lex->ib->inst[fjump_idx].arg = lex->ib->count;
+
+    return node;
+}
+
+
+/*
  *  Węzeł przypisania
  */
 
@@ -476,7 +519,7 @@ node_t* node_expr(lexer_t *lex, uint8_t rbp) {
     prefix_fun_t prefix = node_handler[lex->token.type].prefix;
     node_t *node = prefix ? prefix(lex) : NULL;
     if(!node) return NULL; // node_error(lex, "Syntax error");
-    if(node->type == ND_IF) return node;
+    if(is_block(node->type)) return node;
     while(rbp < node_handler[lex->peek.type].lbp) {
         infix_fun_t infix = node_handler[lex->peek.type].infix;
         node = infix ? infix(lex, node) : node;
@@ -589,6 +632,15 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
             break;
         case ND_IF:
             fprintf(stdout, "IF\n");
+            node_print(node->child, db, indent + 1);
+            next = node->child->next;
+            while(next) {
+                node_print(next, db, indent + 1);
+                next = next->next;
+            }
+            break;
+        case ND_WHILE:
+            fprintf(stdout, "WHILE\n");
             node_print(node->child, db, indent + 1);
             next = node->child->next;
             while(next) {

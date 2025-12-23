@@ -38,6 +38,7 @@ typedef enum {
     KW_ELSE,
     KW_AND,
     KW_OR,
+    KW_WHILE,
     KW_OUT,
     KEYWORDS_NUM,
 } keyword_type_t;
@@ -115,6 +116,7 @@ typedef enum {
     TK_EQEQ,
     TK_AND,
     TK_OR,
+    TK_WHILE,
     TK_CALL,
 } token_type_t;
 
@@ -150,11 +152,12 @@ typedef enum {
     ND_ID,
     ND_CALL,
     ND_IF,
+    ND_WHILE,
     ND_ASSIGN,
     ND_BLOCK,
 } node_type_t;
 
-#define is_block(t) (t == ND_BLOCK || t == ND_IF)
+#define is_block(t) (t == ND_BLOCK || t == ND_IF || t == ND_WHILE)
 #define is_inst(t) (t == ND_CALL || t == ND_ASSIGN)
 
 typedef enum {
@@ -241,6 +244,7 @@ node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
 node_t* node_call(lexer_t *lex);
 node_t* node_if(lexer_t *lex);
+node_t* node_while(lexer_t *lex);
 node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, uint8_t rbp);
 node_t* node_block(lexer_t *lex);
