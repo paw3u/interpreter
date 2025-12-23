@@ -93,6 +93,7 @@ typedef enum {
     TK_MINUS    = '-',
     TK_STAR     = '*',
     TK_SLASH    = '/',
+    TK_PERC     = '%',
     TK_BAND     = '&',
     TK_BOR      = '|',
     TK_BXOR     = '^',

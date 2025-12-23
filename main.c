@@ -8,6 +8,19 @@
 #include <errno.h>
 #include "main.h"
 
+/**
+ ** Todo:
+ **     - lepsze info o błędach, linia i kolumna
+ **     - funkcje i zmienne lokalne
+ **     - zapis i odczyt bytcode'u
+ **     - pomiar szybkości kompilacji i wykonywania kodu
+ **     - tablice
+ **     - stringi
+ **     - proste lambdy
+ **     - typy intX
+ **/
+
+
 /*
  *  Słowa kluczowe
  */
@@ -144,6 +157,7 @@ node_handler_t node_handler[] = {
     [TK_MINUS]  = { node_unop,  node_binop,     10 },
     [TK_STAR]   = { NULL,       node_binop,     20 },
     [TK_SLASH]  = { NULL,       node_binop,     20 },
+    [TK_PERC]   = { NULL,       node_binop,     20 },
     [TK_BAND]   = { NULL,       node_binop,     30 },
     [TK_BOR]    = { NULL,       node_binop,     30 },
     [TK_BXOR]   = { NULL,       node_binop,     30 },
@@ -302,6 +316,7 @@ node_t* node_binop(lexer_t *lex, node_t *left) {
         case TK_MINUS: ib_write(lex->ib, OP_SUB, 0); break;
         case TK_STAR: ib_write(lex->ib, OP_MULT, 0); break;
         case TK_SLASH: ib_write(lex->ib, OP_DIV, 0); break;
+        case TK_PERC: ib_write(lex->ib, OP_MOD, 0); break;
         case TK_BAND: ib_write(lex->ib, OP_BAND, 0); break;
         case TK_BOR: ib_write(lex->ib, OP_BOR, 0); break;
         case TK_BXOR: ib_write(lex->ib, OP_BXOR, 0); break;
