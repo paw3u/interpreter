@@ -28,16 +28,23 @@ typedef enum {
     OP_GE,
     OP_EQ,
     OP_VSET,
-    OP_VSETN,
     OP_VGET,
     OP_JUMP,
-    OP_JUMPIF,
+    OP_FJUMP,
 } opcode_t;
+
+typedef enum {
+    KW_IF,
+    KW_ELSE,
+    KW_AND,
+    KW_OR,
+    KW_OUT,
+    KEYWORDS_NUM,
+} keyword_type_t;
 
 typedef struct {
     uint32_t opcode;
-    uint32_t arg0;
-    uint32_t arg1;
+    uint32_t arg;
 } inst_t;
 
 typedef struct {
@@ -46,10 +53,8 @@ typedef struct {
     inst_t *inst;
 } ibuffer_t;
 
-void ib_writex(ibuffer_t *ib, uint32_t opcode, uint32_t arg0, uint32_t arg1);
+void ib_write(ibuffer_t *ib, uint32_t opcode, uint32_t arg);
 void ib_free(ibuffer_t *ib);
-
-#define ib_write(ib, opcode, arg) ib_writex(ib, opcode, arg, 0);
 
 typedef struct {
     size_t size;
@@ -97,26 +102,30 @@ typedef enum {
     TK_LT       = '<',
     TK_GT       = '>',
     TK_EXC      = '!',
+    TK_DELIM    = ';',
+    TK_LBRACE   = '{',
+    TK_RBRACE   = '}',
     TK_NUM      = 256,
     TK_STR,
     TK_ID,
     TK_IF,
-    TK_THEN,
     TK_ELSE,
-    TK_ELIF,
     TK_LE,
     TK_GE,
     TK_EQEQ,
     TK_AND,
     TK_OR,
-    TK_END,
+    TK_CALL,
 } token_type_t;
 
 typedef struct {
     token_type_t type;
     char *start;
     size_t len;
-    double num;
+    union{
+        double num;
+        keyword_type_t kw;
+    };
 } token_t;
 
 typedef struct {
@@ -125,7 +134,6 @@ typedef struct {
     token_t token;
     token_t peek;
     uint8_t error;
-    uint8_t eval;
     dbuffer_t *db;
     ibuffer_t *ib;
     ibuffer_t *fb;
@@ -143,13 +151,18 @@ typedef enum {
     ND_CALL,
     ND_IF,
     ND_ASSIGN,
+    ND_BLOCK,
 } node_type_t;
+
+#define is_block(t) (t == ND_BLOCK || t == ND_IF)
+#define is_inst(t) (t == ND_CALL || t == ND_ASSIGN)
 
 typedef enum {
     VT_NIL,
     VT_NUM,
     VT_CHR,
     VT_ARR,
+    VT_FUN,
 } val_type_t;
 
 #define type_nil (1 << VT_NIL)
@@ -184,6 +197,7 @@ typedef struct {
 typedef struct {
     char *name;
     size_t len;
+    uint32_t index;
 } id_node_t;
 
 typedef struct node_t node_t;
@@ -209,16 +223,7 @@ typedef struct {
     op_fun_t fun;
 } keyword_t;
 
-typedef enum {
-    KW_IF,
-    KW_THEN,
-    KW_ELSE,
-    KW_ELIF,
-    KW_END,
-    KW_AND,
-    KW_OR,
-    KEYWORDS_NUM,
-} keyword_type_t;
+
 
 typedef struct {
     prefix_fun_t prefix;
@@ -234,12 +239,14 @@ uint32_t hash(const char *str, size_t len, uint32_t seed);
 node_t* node_group(lexer_t *lex);
 node_t* node_val(lexer_t *lex);
 node_t* node_id(lexer_t *lex);
+node_t* node_eval(node_t *node, lexer_t *lex);
 node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
-node_t* node_call(lexer_t *lex, uint8_t kw);
+node_t* node_call(lexer_t *lex);
 node_t* node_if(lexer_t *lex);
 node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, uint8_t rbp);
+node_t* node_block(lexer_t *lex);
 node_t* node_error(lexer_t *lex, char *msg);
 node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb);
 void node_print(node_t *node, dbuffer_t *db, int indent);

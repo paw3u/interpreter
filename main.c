@@ -14,12 +14,10 @@
 
 keyword_t keywords[] = {
     [KW_IF]     = { "if",       TK_IF,      NULL },
-    [KW_THEN]   = { "then",     TK_THEN,    NULL },
     [KW_ELSE]   = { "else",     TK_ELSE,    NULL },
-    [KW_ELIF]   = { "elif",     TK_ELIF,    NULL },
-    [KW_END]    = { "end",      TK_END,     NULL },
     [KW_AND]    = { "and",      TK_AND,     NULL },
-    [KW_OR ]    = { "or",       TK_OR,      NULL },
+    [KW_OR]     = { "or",       TK_OR,      NULL },
+    [KW_OUT]    = { "out",      TK_CALL,    NULL },
 };
 
 /*
@@ -55,6 +53,7 @@ void next_token(lexer_t *lex) {
         for(size_t i = 0; i < KEYWORDS_NUM; i++) {
             if(!strncmp(keywords[i].name, lex->peek.start, strlen(keywords[i].name))){
                 lex->peek.type = keywords[i].token;
+                lex->peek.kw = i;
                 return;
             }
         }
@@ -105,7 +104,6 @@ lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb)
     lex.source = str;
     lex.pos = lex.source;
     lex.error = 0;
-    lex.eval = 0;
     lex.db = db;
     lex.ib = ib;
     lex.fb = fb;
@@ -119,16 +117,18 @@ lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb)
  */
 
 node_handler_t node_handler[] = {
-    [TK_NUM]    = { node_val,   NULL,           0  },
-    [TK_STR]    = { node_val,   NULL,           0  },
-    [TK_ID]     = { node_id,    NULL,           0  },
-    [TK_LPAREN] = { node_group, NULL,           0  },
-    [TK_RPAREN] = { NULL,       NULL,           0  },
-    [TK_IF]     = { node_if,    NULL,           1  },
-    [TK_THEN]   = { NULL,       NULL,           1  },
-    [TK_ELSE]   = { NULL,       NULL,           1  },
-    [TK_ELIF]   = { NULL,       NULL,           1  },
-    [TK_END]    = { NULL,       NULL,           1  },
+    [TK_EOF] =    { NULL,       NULL,           0  },
+    [TK_LBRACE] = { node_block, NULL,           0  },
+    [TK_RBRACE] = { NULL,       NULL,           0  },
+    [TK_DELIM]  = { NULL,       NULL,           0  },
+    [TK_NUM]    = { node_val,   NULL,           1  },
+    [TK_STR]    = { node_val,   NULL,           1  },
+    [TK_ID]     = { node_id,    NULL,           1  },
+    [TK_CALL]   = { node_call,  NULL,           1  },
+    [TK_LPAREN] = { node_group, NULL,           1  },
+    [TK_RPAREN] = { NULL,       NULL,           1  },
+    [TK_IF]     = { node_if,    NULL,           6  },
+    [TK_ELSE]   = { NULL,       NULL,           6  },
     [TK_EQ]     = { NULL,       node_assign,    7  },
     [TK_AND]    = { NULL,       node_binop,     8  },
     [TK_OR]     = { NULL,       node_binop,     8  },
@@ -190,7 +190,7 @@ void node_free(node_t *node) {
  */
 
 node_t* node_group(lexer_t *lex) {
-    node_t *expr = node_expr(lex, 0);
+    node_t *expr = node_expr(lex, node_handler[TK_RPAREN].lbp);
     if(!expr) return NULL;
     next_token(lex);
     if(lex->token.type != TK_RPAREN){
@@ -250,22 +250,33 @@ node_t* node_id(lexer_t *lex) {
 
     size_t index = hash(node->id->name, node->id->len, (intptr_t)lex->vb) & (VARS_SIZE - 1);
     size_t start = index;
-    uint8_t overflow = 0;
     while(lex->vb[index].name && strncmp(lex->vb[index].name, node->id->name, node->id->len)){
         index = (index + 1) & (VARS_SIZE - 1);
         if(index == start) {
-            overflow = 1;
-            break;
+            return node_error(lex, "Variable table overflow"); 
         }
     }
-    if(!lex->vb[index].name || overflow){
-        if(!lex->eval) return node;
-        return node_error(lex, "Unknown identifier"); 
-    }
-    node->val.type = type_num; // Na razie tylko liczby jako zmienne
-    ib_write(lex->ib, OP_VGET, index);
-
+    node->val.type = type_num; // Na razie tylko liczby jako zmienne'
+    node->id->index = index;
     return node; 
+}
+
+/*
+ *  Ewaluacja węzła do wartości liczbowej
+ */
+
+node_t* node_eval(node_t *node, lexer_t *lex){
+    if(!node) return NULL;
+    if(node->type == ND_ID){
+        if(!lex->vb[node->id->index].name){
+            return node_error(lex, "Unknown identifier");
+        }
+        ib_write(lex->ib, OP_VGET, node->id->index);
+    }
+    else if(!is_num(node->val.type)){
+        return node_error(lex, "Not a number");
+    }
+    return node;
 }
 
 /*
@@ -276,15 +287,12 @@ node_t* node_binop(lexer_t *lex, node_t *left) {
     next_token(lex);
     token_type_t op = lex->token.type;
     node_t *right = node_expr(lex, node_handler[op].lbp);
-    if(!right) return NULL;
+    if(!node_eval(right, lex)) return NULL;
+    if(!node_eval(left, lex)) return NULL;
     node_t *node = node_alloc(lex, ND_BINOP);
     node->op = op;
     node->child = left;
     left->next = right;
-    
-    if(!is_num(left->val.type) || !is_num(right->val.type)){
-        return node_error(lex, "Error: invalid operand type");
-    }
     node->val.type = type_num;
 
     switch(op){
@@ -339,7 +347,8 @@ node_t* node_unop(lexer_t *lex) {
  *  Węzeł wywołania funkcji
  */
 
-node_t* node_call(lexer_t *lex, uint8_t kw) {
+node_t* node_call(lexer_t *lex) {
+    keyword_type_t kw = lex->token.kw;
     next_token(lex);
     if(lex->token.type != TK_LPAREN){
         return node_error(lex, "Syntax error: ( missing");
@@ -357,69 +366,60 @@ node_t* node_call(lexer_t *lex, uint8_t kw) {
  */
 
 node_t* node_if(lexer_t *lex) {
-    if(lex->token.type != TK_IF && lex->token.type != TK_ELIF) {
+    next_token(lex);
+    if(lex->token.type != TK_LPAREN){
         return node_error(lex, "'if' statement syntax error");
     }
+    node_t *cond = node_group(lex);
+    if(!node_eval(cond, lex)) return NULL;
 
-    uint8_t elif = 0;
-    uint8_t lbp = node_handler[TK_IF].lbp;
-    node_t *cond = node_expr(lex, lbp);
-    if(!cond) return NULL;
+    uint32_t fjump_idx = lex->ib->count;
+    ib_write(lex->ib, OP_FJUMP, 0);
 
-    uint32_t jump_idx = lex->ib->count;
-    ib_write(lex->ib, OP_JUMPIF, 0);
-    
     node_t *node = node_alloc(lex, ND_IF);
     node->child = cond;
 
     next_token(lex);
-    if(lex->token.type != TK_THEN){
+    node_t *expr_true = NULL;
+    if(lex->token.type != TK_LBRACE){
         node_free(node);
-        return node_error(lex, "'if' statement syntax error: 'then' missing");
+        return node_error(lex, "'if' statement syntax error");
     }
-    node_t *expr_true = node_expr(lex, lbp);
+    expr_true = node_block(lex);
     if(!expr_true){
         node_free(node);
         return NULL;
     }
     cond->next = expr_true;
 
-    lex->ib->inst[jump_idx].arg0 = lex->ib->count + 1;
-    jump_idx = lex->ib->count;
-    ib_write(lex->ib, OP_JUMP, 0);
-
-    next_token(lex);
     node_t *expr_false = NULL;
-    if(lex->token.type == TK_END){
-        return node;
-    }
-    else if(lex->token.type == TK_ELSE){
-        expr_false = node_expr(lex, lbp);
-    }
-    else if(lex->token.type == TK_ELIF){
-        expr_false = node_if(lex);
-        elif = 1;
+    if(lex->peek.type == TK_ELSE){
+        next_token(lex);
+        uint32_t jump_idx = lex->ib->count;
+        ib_write(lex->ib, OP_JUMP, 0);
+        lex->ib->inst[fjump_idx].arg = lex->ib->count;
+
+        next_token(lex);
+        if(lex->token.type == TK_LBRACE){
+            expr_false = node_block(lex);
+        }
+        else if(lex->token.type == TK_IF){
+            expr_false = node_if(lex);
+        }
+        else{
+            node_free(node);
+            return node_error(lex, "'else' statement syntax error");
+        }
+        if(!expr_false){
+            node_free(node);
+            return NULL;
+        }
+        lex->ib->inst[jump_idx].arg = lex->ib->count;
     }
     else{
-        node_free(node);
-        return node_error(lex, "'if' statement syntax error");
-    }
-
-    if(!expr_false) {
-        node_free(node);
-        return NULL;
+        lex->ib->inst[fjump_idx].arg = lex->ib->count;
     }
     expr_true->next = expr_false;
-
-    lex->ib->inst[jump_idx].arg0 = lex->ib->count;
-
-    if(elif) return node;
-
-    next_token(lex);
-    if(lex->token.type != TK_END){
-        node_free(node);
-        return node_error(lex, "'if' statement syntax error: 'end' missing");
-    }
 
     return node;
 }
@@ -431,7 +431,6 @@ node_t* node_if(lexer_t *lex) {
 node_t* node_assign(lexer_t *lex, node_t *left) {
     next_token(lex);
     if(left->type != ND_ID) return node_error(lex, "Assignment error");
-    lex->eval = 1;
     token_type_t op = lex->token.type;
     node_t *right = node_expr(lex, node_handler[op].lbp);
     if(!right || !is_num(right->val.type)) {
@@ -442,21 +441,12 @@ node_t* node_assign(lexer_t *lex, node_t *left) {
     node->child = left;
     left->next = right;
 
-    size_t index = hash(left->id->name, left->id->len, (intptr_t)lex->vb) & (VARS_SIZE - 1);
-    size_t start = index;
-    while(lex->vb[index].name && strncmp(lex->vb[index].name, left->id->name, left->id->len)){
-        index = (index + 1) & (VARS_SIZE - 1);
-        if(index == start) {
-            return node_error(lex, "Assignment error: variable array overflow");
-        }
-    }
-    if(!lex->vb[index].name) {
-        ib_writex(lex->ib, OP_VSETN, index, lex->db->size);
+    if(!lex->vb[left->id->index].name) {
+        lex->vb[left->id->index].name = (char*) &lex->db->data[lex->db->size];
         db_write(lex->db, left->id->name, left->id->len);
         db_write_u8(lex->db, 0);
-        return node;
     }
-    ib_write(lex->ib, OP_VSET, index);
+    ib_write(lex->ib, OP_VSET, left->id->index);
     return node;
 }
 
@@ -468,11 +458,44 @@ node_t* node_expr(lexer_t *lex, uint8_t rbp) {
     next_token(lex);
     prefix_fun_t prefix = node_handler[lex->token.type].prefix;
     node_t *node = prefix ? prefix(lex) : NULL;
-    if(!node) return node_error(lex, "Syntax error");
+    if(!node) return NULL; // node_error(lex, "Syntax error");
+    if(node->type == ND_IF) return node;
     while(rbp < node_handler[lex->peek.type].lbp) {
         infix_fun_t infix = node_handler[lex->peek.type].infix;
         node = infix ? infix(lex, node) : node;
     }
+    return node;
+}
+
+/*
+ *  Funkcja parsowania bloku wyrażeń
+ */
+
+node_t* node_block(lexer_t *lex) {
+    node_t *node = node_alloc(lex, ND_BLOCK);
+    if(lex->peek.type == TK_RBRACE || lex->peek.type == TK_EOF){
+        next_token(lex);
+        return node;
+    }
+
+    node_t *expr = node_expr(lex, node_handler[TK_DELIM].lbp);
+    node->child = expr;
+    while(1){        
+        if(!expr) break;
+        if(!is_block(expr->type) && !is_inst(expr->type)){
+            return node_error(lex, "Invalid expression");
+        }
+        if(!is_block(expr->type) && lex->peek.type != TK_DELIM){
+            return node_error(lex, "Syntax error: ';' missing");
+        }
+        if(lex->peek.type == TK_DELIM) next_token(lex);
+        if(lex->peek.type == TK_RBRACE || lex->peek.type == TK_EOF){
+            next_token(lex);
+            return node;
+        }
+        expr->next = node_expr(lex, node_handler[TK_DELIM].lbp);
+        expr = expr->next;
+    };
     return node;
 }
 
@@ -494,7 +517,9 @@ node_t* node_error(lexer_t *lex, char *msg){
 node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb) {
     lexer_t lex = lexer(expr, db, ib, fb, vb);
     if(lex.peek.type == TK_EOF) return NULL;
-    node_t *root = node_expr(&lex, 0);
+    //node_t *root = node_expr(&lex, 0);
+    node_t *root = node_block(&lex);
+    if(!root || !root->child) return NULL;
     if(lex.peek.type != TK_EOF) {
         next_token(&lex);
         return node_error(&lex, "Syntax error: unexpected expression");
@@ -554,23 +579,29 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
                 next = next->next;
             }
             break;
+        case ND_BLOCK:
+            fprintf(stdout, "BLOCK\n");
+            next = node->child;
+            while(next) {
+                node_print(next, db, indent + 1);
+                next = next->next;
+            }
+            break;
         default:
             break;
     }
 }
 
-
-
 /*
  *  Bufor instrukcji
  */
 
-void ib_writex(ibuffer_t *ib, uint32_t opcode, uint32_t arg0, uint32_t arg1){
+void ib_write(ibuffer_t *ib, uint32_t opcode, uint32_t arg){
     if(ib->count >= ib->capacity) {
         ib->capacity = ib->capacity ? ib->capacity * 2 : 256;
         ib->inst = realloc(ib->inst, ib->capacity * sizeof(inst_t));
     }
-    ib->inst[ib->count++] = (inst_t){opcode, arg0, arg1};
+    ib->inst[ib->count++] = (inst_t){opcode, arg};
 }
 
 void ib_free(ibuffer_t *ib){
@@ -617,19 +648,19 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
         &&op_bnot, &&op_not, &&op_call, &&op_print,
         &&op_and, &&op_or, &&op_lt, &&op_le,
         &&op_gt, &&op_ge, &&op_eq, &&op_vset,
-        &&op_vsetn, &&op_vget, &&op_jump, &&op_jumpif
+        &&op_vget, &&op_jump, &&op_fjump
     };
 
     #define NEXT() goto *op_table[ib->inst[++pc].opcode]
-    #define arg0 ib->inst[pc].arg0
-    #define arg1 ib->inst[pc].arg1
+    #define arg ib->inst[pc].arg
 
     goto *op_table[ib->inst[0].opcode];
 
     op_halt:
+        if(sp) fprintf(stdout, "%g\n", stack[--sp].num);
         return;
     op_load:
-        stack[sp++].num = *(double*)(db->data + arg0);
+        stack[sp++].num = *(double*)(db->data + arg);
         NEXT();
     op_add:
         stack[sp-2].num = stack[sp-2].num + stack[sp-1].num; sp--;
@@ -693,21 +724,17 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
         stack[sp-2].num = stack[sp-2].num == stack[sp-1].num; sp--;
         NEXT();
     op_vset:
-        vb[arg0].val = stack[--sp];
-        NEXT();
-    op_vsetn:
-        vb[arg0].name = (char*) &db->data[arg1];
-        vb[arg0].val = stack[--sp];
+        vb[arg].val = stack[--sp];
         NEXT();
     op_vget:
-        stack[sp++].num = vb[arg0].val.num;
+        stack[sp++].num = vb[arg].val.num;
         NEXT();
     op_jump:
-        pc = arg0;
+        pc = arg;
         goto *op_table[ib->inst[pc].opcode];
-    op_jumpif:
+    op_fjump:
         if(!stack[--sp].num){
-            pc = arg0;
+            pc = arg;
             goto *op_table[ib->inst[pc].opcode];
         }
         NEXT();
@@ -724,11 +751,40 @@ int main(int argc, char *argv[]) {
     FILE *file = stdin;
 
     if(argc > 1) {
-        file = fopen(argv[1], "r");
+        file = fopen(argv[1], "rb");
         if(!file) {
             fprintf(stderr, "Unable to open file \"%s\"\n", argv[1]);
             exit(EIO);
         }
+        fseek(file, 0, SEEK_END);
+        size_t f_size = ftell(file);
+        fseek(file, 0, SEEK_SET);
+        char *code = (char*) calloc(1, f_size + 1);
+        if(!code) exit(ENOMEM);
+        if(fread(code, f_size, 1, file) != 1){
+            fclose(file);
+            free(code);
+            exit(EIO);
+        }
+        fclose(file);
+
+        var_t vars[VARS_SIZE] = {0};
+        dbuffer_t data_buf = db_create();
+        ibuffer_t inst_buf = {0};
+        ibuffer_t fun_buf = {0};
+        fprintf(stderr, "%s\n", code);
+        node_t *root = parse(code, &data_buf, &inst_buf, &fun_buf, vars);
+        if(root){
+            node_print(root, &data_buf, 0);
+            //if(is_num(root->val.type)) ib_write(&inst_buf, OP_PRINT, 0);
+            ib_write(&inst_buf, OP_HALT, 0);
+            execute(&data_buf, &inst_buf, &fun_buf, vars);
+            node_free(root); 
+        }
+        ib_free(&inst_buf);
+        ib_free(&fun_buf);
+        db_free(&data_buf);
+        return 0;
     }
 
     var_t vars[VARS_SIZE] = {0};
@@ -742,7 +798,7 @@ int main(int argc, char *argv[]) {
         node_t *root = parse(line, &data_buf, &inst_buf, &fun_buf, vars);
         if(root){
             node_print(root, &data_buf, 0);
-            if(is_num(root->val.type)) ib_write(&inst_buf, OP_PRINT, 0);
+            //if(is_num(root->val.type)) ib_write(&inst_buf, OP_PRINT, 0);
             ib_write(&inst_buf, OP_HALT, 0);
             execute(&data_buf, &inst_buf, &fun_buf, vars);
             node_free(root); 
@@ -756,4 +812,5 @@ int main(int argc, char *argv[]) {
     if(file != stdin) fclose(file);
 
     return 0;
+
 }
