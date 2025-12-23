@@ -215,15 +215,12 @@ struct node_t {
 
 typedef node_t* (*prefix_fun_t)(lexer_t *lex);
 typedef node_t* (*infix_fun_t)(lexer_t *lex, node_t *node);
-typedef void (*op_fun_t)(node_t *node);
+typedef node_t* (*call_fun_t)(lexer_t *lex, node_t *node);
 
 typedef struct {
     const char *name;
     token_type_t token;
-    op_fun_t fun;
 } keyword_t;
-
-
 
 typedef struct {
     prefix_fun_t prefix;
@@ -239,7 +236,7 @@ uint32_t hash(const char *str, size_t len, uint32_t seed);
 node_t* node_group(lexer_t *lex);
 node_t* node_val(lexer_t *lex);
 node_t* node_id(lexer_t *lex);
-node_t* node_eval(node_t *node, lexer_t *lex);
+node_t* node_eval(lexer_t *lex, node_t *node);
 node_t* node_binop(lexer_t *lex, node_t *left);
 node_t* node_unop(lexer_t *lex);
 node_t* node_call(lexer_t *lex);

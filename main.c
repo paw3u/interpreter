@@ -13,11 +13,11 @@
  */
 
 keyword_t keywords[] = {
-    [KW_IF]     = { "if",       TK_IF,      NULL },
-    [KW_ELSE]   = { "else",     TK_ELSE,    NULL },
-    [KW_AND]    = { "and",      TK_AND,     NULL },
-    [KW_OR]     = { "or",       TK_OR,      NULL },
-    [KW_OUT]    = { "out",      TK_CALL,    NULL },
+    [KW_IF]     = { "if",       TK_IF   },
+    [KW_ELSE]   = { "else",     TK_ELSE },
+    [KW_AND]    = { "and",      TK_AND  },
+    [KW_OR]     = { "or",       TK_OR   },
+    [KW_OUT]    = { "out",      TK_CALL },
 };
 
 /*
@@ -265,7 +265,7 @@ node_t* node_id(lexer_t *lex) {
  *  Ewaluacja węzła do wartości liczbowej
  */
 
-node_t* node_eval(node_t *node, lexer_t *lex){
+node_t* node_eval(lexer_t *lex, node_t *node){
     if(!node) return NULL;
     if(node->type == ND_ID){
         if(!lex->vb[node->id->index].name){
@@ -286,9 +286,9 @@ node_t* node_eval(node_t *node, lexer_t *lex){
 node_t* node_binop(lexer_t *lex, node_t *left) {
     next_token(lex);
     token_type_t op = lex->token.type;
+    if(!node_eval(lex, left)) return NULL;
     node_t *right = node_expr(lex, node_handler[op].lbp);
-    if(!node_eval(right, lex)) return NULL;
-    if(!node_eval(left, lex)) return NULL;
+    if(!node_eval(lex, right)) return NULL;
     node_t *node = node_alloc(lex, ND_BINOP);
     node->op = op;
     node->child = left;
@@ -344,11 +344,25 @@ node_t* node_unop(lexer_t *lex) {
 }
 
 /*
+ *  Funkcje wbudowane
+ */
+
+node_t* builtin_out(lexer_t *lex, node_t *node) {
+    if(!node_eval(lex, node->child)) return NULL;
+    ib_write(lex->ib, OP_PRINT, 0);
+    return node;
+}
+
+call_fun_t builtin[] = {
+    [KW_OUT] = builtin_out,
+};
+
+/*
  *  Węzeł wywołania funkcji
  */
 
 node_t* node_call(lexer_t *lex) {
-    keyword_type_t kw = lex->token.kw;
+    token_t token = lex->token;
     next_token(lex);
     if(lex->token.type != TK_LPAREN){
         return node_error(lex, "Syntax error: ( missing");
@@ -356,9 +370,12 @@ node_t* node_call(lexer_t *lex) {
     node_t *expr = node_group(lex);
     if(!expr) return NULL;
     node_t *node = node_alloc(lex, ND_CALL);
-    node->op = kw;
+    node->id = (id_node_t*) malloc(sizeof(id_node_t));
+    if(!node->id) exit(ENOMEM);
+    node->id->name = token.start;
+    node->id->len = token.len;
     node->child = expr;
-    return node;
+    return builtin[token.kw](lex, node);
 }
 
 /*
@@ -371,7 +388,7 @@ node_t* node_if(lexer_t *lex) {
         return node_error(lex, "'if' statement syntax error");
     }
     node_t *cond = node_group(lex);
-    if(!node_eval(cond, lex)) return NULL;
+    if(!node_eval(lex, cond)) return NULL;
 
     uint32_t fjump_idx = lex->ib->count;
     ib_write(lex->ib, OP_FJUMP, 0);
@@ -562,7 +579,7 @@ void node_print(node_t *node, dbuffer_t *db, int indent) {
             node_print(node->child, db, indent + 1);
             break;
         case ND_CALL:
-            fprintf(stdout, "CALL %s\n", keywords[node->op].name);
+            fprintf(stdout, "CALL %.*s\n", (int)node->id->len, node->id->name);
             node_print(node->child, db, indent + 1);
             next = node->child->next;
             while(next) {
@@ -657,7 +674,6 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
     goto *op_table[ib->inst[0].opcode];
 
     op_halt:
-        if(sp) fprintf(stdout, "%g\n", stack[--sp].num);
         return;
     op_load:
         stack[sp++].num = *(double*)(db->data + arg);
@@ -772,11 +788,9 @@ int main(int argc, char *argv[]) {
         dbuffer_t data_buf = db_create();
         ibuffer_t inst_buf = {0};
         ibuffer_t fun_buf = {0};
-        fprintf(stderr, "%s\n", code);
         node_t *root = parse(code, &data_buf, &inst_buf, &fun_buf, vars);
         if(root){
             node_print(root, &data_buf, 0);
-            //if(is_num(root->val.type)) ib_write(&inst_buf, OP_PRINT, 0);
             ib_write(&inst_buf, OP_HALT, 0);
             execute(&data_buf, &inst_buf, &fun_buf, vars);
             node_free(root); 
@@ -798,7 +812,6 @@ int main(int argc, char *argv[]) {
         node_t *root = parse(line, &data_buf, &inst_buf, &fun_buf, vars);
         if(root){
             node_print(root, &data_buf, 0);
-            //if(is_num(root->val.type)) ib_write(&inst_buf, OP_PRINT, 0);
             ib_write(&inst_buf, OP_HALT, 0);
             execute(&data_buf, &inst_buf, &fun_buf, vars);
             node_free(root); 
