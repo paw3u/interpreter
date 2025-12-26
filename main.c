@@ -35,14 +35,59 @@ keyword_t keywords[] = {
 };
 
 /*
+ *  Parametry operatorów: handlery prefix, infix, moc wiązania
+ */
+
+node_handler_t node_handler[] = {
+    [TK_EOF] =    { NULL,       NULL,           0  },
+    [TK_LBRACE] = { node_block, NULL,           0  },
+    [TK_RBRACE] = { NULL,       NULL,           0  },
+    [TK_DELIM]  = { NULL,       NULL,           0  },
+    [TK_NUM]    = { node_val,   NULL,           1  },
+    [TK_STR]    = { node_val,   NULL,           1  },
+    [TK_ID]     = { node_id,    NULL,           1  },
+    [TK_CALL]   = { node_call,  NULL,           1  },
+    [TK_LPAREN] = { node_group, NULL,           1  },
+    [TK_RPAREN] = { NULL,       NULL,           1  },
+    [TK_IF]     = { node_if,    NULL,           6  },
+    [TK_ELSE]   = { NULL,       NULL,           6  },
+    [TK_WHILE]  = { node_while, NULL,           6  },
+    [TK_EQ]     = { NULL,       node_assign,    7  },
+    [TK_AND]    = { NULL,       node_binop,     8  },
+    [TK_OR]     = { NULL,       node_binop,     8  },
+    [TK_EXC]    = { node_unop,  NULL,           8  },
+    [TK_LT]     = { NULL,       node_binop,     9  },
+    [TK_GT]     = { NULL,       node_binop,     9  },
+    [TK_LE]     = { NULL,       node_binop,     9  },
+    [TK_GE]     = { NULL,       node_binop,     9  },
+    [TK_EQEQ]   = { NULL,       node_binop,     9  },
+    [TK_PLUS]   = { NULL,       node_binop,     10 },
+    [TK_MINUS]  = { node_unop,  node_binop,     10 },
+    [TK_STAR]   = { NULL,       node_binop,     20 },
+    [TK_SLASH]  = { NULL,       node_binop,     20 },
+    [TK_PERC]   = { NULL,       node_binop,     20 },
+    [TK_BAND]   = { NULL,       node_binop,     30 },
+    [TK_BOR]    = { NULL,       node_binop,     30 },
+    [TK_BXOR]   = { NULL,       node_binop,     30 },
+    [TK_TILDE]  = { node_unop,  NULL,           30 },
+};
+
+/*
  *  Przejście do kolejnego tokenu
  */
 
 void next_token(lexer_t *lex) {
     lex->token = lex->peek;
 
-    while(*lex->pos && isspace(*lex->pos)) lex->pos++;
+    while(*lex->pos && isspace(*lex->pos)) {
+        if(*lex->pos == '\n') {
+            lex->line++;
+            lex->peek.line_start = lex->pos + 1;
+        }
+        lex->pos++;
+    }
 
+    lex->peek.line = lex->line;
     lex->peek.start = lex->pos;
     lex->peek.len = 1;
 
@@ -77,7 +122,7 @@ void next_token(lexer_t *lex) {
     if(c == '\'') {
         while(*lex->pos && (*lex->pos != '\'' && *(lex->pos - 1) != '\\')) lex->pos++;
         if(!*lex->pos){
-            fprintf(stderr, "Syntax error: ' missing [%lld]\n", lex->pos - lex->source);
+            fprintf(stderr, "[%u:%lld] Syntax error: ' missing\n", lex->line, lex->pos - lex->peek.line_start);
             lex->error = 1;
             return;
         }
@@ -117,6 +162,9 @@ lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb)
     lexer_t lex;
     lex.source = str;
     lex.pos = lex.source;
+    lex.token.line_start = lex.source;
+    lex.peek.line_start = lex.source;
+    lex.token.line = lex.peek.line = lex.line = 1;
     lex.error = 0;
     lex.db = db;
     lex.ib = ib;
@@ -125,44 +173,6 @@ lexer_t lexer(char *str, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb)
     next_token(&lex);
     return lex;
 }
-
-/*
- *  Parametry operatorów: handlery prefix, infix, moc wiązania
- */
-
-node_handler_t node_handler[] = {
-    [TK_EOF] =    { NULL,       NULL,           0  },
-    [TK_LBRACE] = { node_block, NULL,           0  },
-    [TK_RBRACE] = { NULL,       NULL,           0  },
-    [TK_DELIM]  = { NULL,       NULL,           0  },
-    [TK_NUM]    = { node_val,   NULL,           1  },
-    [TK_STR]    = { node_val,   NULL,           1  },
-    [TK_ID]     = { node_id,    NULL,           1  },
-    [TK_CALL]   = { node_call,  NULL,           1  },
-    [TK_LPAREN] = { node_group, NULL,           1  },
-    [TK_RPAREN] = { NULL,       NULL,           1  },
-    [TK_IF]     = { node_if,    NULL,           6  },
-    [TK_ELSE]   = { NULL,       NULL,           6  },
-    [TK_WHILE]  = { node_while, NULL,           6  },
-    [TK_EQ]     = { NULL,       node_assign,    7  },
-    [TK_AND]    = { NULL,       node_binop,     8  },
-    [TK_OR]     = { NULL,       node_binop,     8  },
-    [TK_EXC]    = { node_unop,  NULL,           8  },
-    [TK_LT]     = { NULL,       node_binop,     9  },
-    [TK_GT]     = { NULL,       node_binop,     9  },
-    [TK_LE]     = { NULL,       node_binop,     9  },
-    [TK_GE]     = { NULL,       node_binop,     9  },
-    [TK_EQEQ]   = { NULL,       node_binop,     9  },
-    [TK_PLUS]   = { NULL,       node_binop,     10 },
-    [TK_MINUS]  = { node_unop,  node_binop,     10 },
-    [TK_STAR]   = { NULL,       node_binop,     20 },
-    [TK_SLASH]  = { NULL,       node_binop,     20 },
-    [TK_PERC]   = { NULL,       node_binop,     20 },
-    [TK_BAND]   = { NULL,       node_binop,     30 },
-    [TK_BOR]    = { NULL,       node_binop,     30 },
-    [TK_BXOR]   = { NULL,       node_binop,     30 },
-    [TK_TILDE]  = { node_unop,  NULL,           30 },
-};
 
 /*
  *  Funkcja hashująca ukradziona z Lua
@@ -533,9 +543,9 @@ node_t* node_expr(lexer_t *lex, uint8_t rbp) {
     next_token(lex);
     prefix_fun_t prefix = node_handler[lex->token.type].prefix;
     node_t *node = prefix ? prefix(lex) : NULL;
-    if(!node) return NULL; // node_error(lex, "Syntax error");
+    if(!node) return node_error(lex, "Syntax error");
     if(is_block(node->type)) return node;
-    while(rbp < node_handler[lex->peek.type].lbp) {
+    while(node && rbp < node_handler[lex->peek.type].lbp) {
         infix_fun_t infix = node_handler[lex->peek.type].infix;
         node = infix ? infix(lex, node) : node;
     }
@@ -581,7 +591,7 @@ node_t* node_block(lexer_t *lex) {
 node_t* node_error(lexer_t *lex, char *msg){
     if(lex->error) return NULL;
     lex->error = 1;
-    fprintf(stderr, "%s [%lld]\n", msg, lex->token.start - lex->source);
+    fprintf(stderr, "[%u:%lld] %s\n", lex->token.line, lex->token.start - lex->token.line_start, msg);
     return NULL;
 }
 
@@ -598,6 +608,10 @@ node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb
     if(lex.peek.type != TK_EOF) {
         next_token(&lex);
         return node_error(&lex, "Syntax error: unexpected expression");
+    }
+    if(lex.error) {
+        node_free(root);
+        return NULL;
     }
     return root;
 }
@@ -830,7 +844,7 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
 #define BUFSIZE 256
 
 int main(int argc, char *argv[]) { 
-    char line[BUFSIZE];
+    char *code;
     FILE *file = stdin;
 
     if(argc > 1) {
@@ -842,7 +856,7 @@ int main(int argc, char *argv[]) {
         fseek(file, 0, SEEK_END);
         size_t f_size = ftell(file);
         fseek(file, 0, SEEK_SET);
-        char *code = (char*) calloc(1, f_size + 1);
+        code = (char*) calloc(1, f_size + 1);
         if(!code) exit(ENOMEM);
         if(fread(code, f_size, 1, file) != 1){
             fclose(file);
@@ -850,47 +864,44 @@ int main(int argc, char *argv[]) {
             exit(EIO);
         }
         fclose(file);
-
-        var_t vars[VARS_SIZE] = {0};
-        dbuffer_t data_buf = db_create();
-        ibuffer_t inst_buf = {0};
-        ibuffer_t fun_buf = {0};
-        node_t *root = parse(code, &data_buf, &inst_buf, &fun_buf, vars);
-        if(root){
-            node_print(root, &data_buf, 0);
-            ib_write(&inst_buf, OP_HALT, 0);
-            execute(&data_buf, &inst_buf, &fun_buf, vars);
-            node_free(root); 
-        }
-        ib_free(&inst_buf);
-        ib_free(&fun_buf);
-        db_free(&data_buf);
-        return 0;
+    }
+    else {
+        code = (char*) calloc(1, BUFSIZE);
     }
 
     var_t vars[VARS_SIZE] = {0};
     dbuffer_t data_buf = db_create();
+    ibuffer_t fun_buf = {0};
 
-    if(file == stdin) fprintf(stdout, ">> ");
-    while(fgets(line, BUFSIZE, file) != NULL){
-        if(strncmp(line, "exit", 4) == 0) break;
+    if(file != stdin) {
         ibuffer_t inst_buf = {0};
-        ibuffer_t fun_buf = {0};
-        node_t *root = parse(line, &data_buf, &inst_buf, &fun_buf, vars);
+        node_t *root = parse(code, &data_buf, &inst_buf, &fun_buf, vars);
         if(root){
-            node_print(root, &data_buf, 0);
+            //node_print(root, &data_buf, 0);
             ib_write(&inst_buf, OP_HALT, 0);
             execute(&data_buf, &inst_buf, &fun_buf, vars);
             node_free(root); 
         }
-        
         ib_free(&inst_buf);
-        ib_free(&fun_buf);
-        if(file == stdin) fprintf(stdout, ">> ");
     }
+    else {
+        fprintf(stdout, ">> ");
+        while(fgets(code, BUFSIZE, file) != NULL){
+            if(strncmp(code, "exit", 4) == 0) break;
+            ibuffer_t inst_buf = {0};
+            node_t *root = parse(code, &data_buf, &inst_buf, &fun_buf, vars);
+            if(root) {
+                node_print(root, &data_buf, 0);
+                ib_write(&inst_buf, OP_HALT, 0);
+                execute(&data_buf, &inst_buf, &fun_buf, vars);
+                node_free(root);
+            }
+            ib_free(&inst_buf);
+            fprintf(stdout, ">> ");
+        }
+    }
+    ib_free(&fun_buf);
     db_free(&data_buf);
-    if(file != stdin) fclose(file);
-
+    
     return 0;
-
 }

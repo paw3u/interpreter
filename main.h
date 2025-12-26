@@ -125,6 +125,8 @@ typedef struct {
     token_type_t type;
     char *start;
     size_t len;
+    char *line_start;
+    uint32_t line;
     union{
         double num;
         keyword_type_t kw;
@@ -137,6 +139,7 @@ typedef struct {
     token_t token;
     token_t peek;
     uint8_t error;
+    uint32_t line;
     dbuffer_t *db;
     ibuffer_t *ib;
     ibuffer_t *fb;
