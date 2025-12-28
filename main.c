@@ -10,11 +10,6 @@
 
 /**
  ** Todo:
-<<<<<<< HEAD
-=======
- **     - zwalnianie pamięci węzłów po wykryciu błędu
- **     - lepsze info o błędach, linia i kolumna
->>>>>>> b2f1b18b03e68a1c43a222e863e28572819de76e
  **     - funkcje i zmienne lokalne
  **     - zapis i odczyt bytcode'u
  **     - pomiar szybkości kompilacji i wykonywania kodu
