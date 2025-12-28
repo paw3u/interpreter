@@ -75,44 +75,6 @@ node_handler_t node_handler[] = {
 };
 
 /*
- *  Operatory węzłów: handlery prefix, infix, moc wiązania
- */
-
-node_handler_t node_handler[] = {
-    [TK_EOF] =    { NULL,       NULL,           0  },
-    [TK_LBRACE] = { node_block, NULL,           0  },
-    [TK_RBRACE] = { NULL,       NULL,           0  },
-    [TK_DELIM]  = { NULL,       NULL,           0  },
-    [TK_NUM]    = { node_val,   NULL,           1  },
-    [TK_STR]    = { node_val,   NULL,           1  },
-    [TK_ID]     = { node_id,    NULL,           1  },
-    [TK_CALL]   = { node_call,  NULL,           1  },
-    [TK_LPAREN] = { node_group, NULL,           1  },
-    [TK_RPAREN] = { NULL,       NULL,           1  },
-    [TK_IF]     = { node_if,    NULL,           6  },
-    [TK_ELSE]   = { NULL,       NULL,           6  },
-    [TK_WHILE]  = { node_while, NULL,           6  },
-    [TK_EQ]     = { NULL,       node_assign,    7  },
-    [TK_AND]    = { NULL,       node_binop,     8  },
-    [TK_OR]     = { NULL,       node_binop,     8  },
-    [TK_EXC]    = { node_unop,  NULL,           8  },
-    [TK_LT]     = { NULL,       node_binop,     9  },
-    [TK_GT]     = { NULL,       node_binop,     9  },
-    [TK_LE]     = { NULL,       node_binop,     9  },
-    [TK_GE]     = { NULL,       node_binop,     9  },
-    [TK_EQEQ]   = { NULL,       node_binop,     9  },
-    [TK_PLUS]   = { NULL,       node_binop,     10 },
-    [TK_MINUS]  = { node_unop,  node_binop,     10 },
-    [TK_STAR]   = { NULL,       node_binop,     20 },
-    [TK_SLASH]  = { NULL,       node_binop,     20 },
-    [TK_PERC]   = { NULL,       node_binop,     20 },
-    [TK_BAND]   = { NULL,       node_binop,     30 },
-    [TK_BOR]    = { NULL,       node_binop,     30 },
-    [TK_BXOR]   = { NULL,       node_binop,     30 },
-    [TK_TILDE]  = { node_unop,  NULL,           30 },
-};
-
-/*
  *  Przejście do kolejnego tokenu
  */
 
