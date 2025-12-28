@@ -1,0 +1,10 @@
+x=0;
+
+fun add(x, y){
+    return x + y;
+}
+
+while(x < 4){
+    x = x + 1;
+    out(x);
+}
