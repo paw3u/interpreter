@@ -10,7 +10,6 @@
 
 /**
  ** Todo:
- **     - lepsze info o błędach, linia i kolumna
  **     - funkcje i zmienne lokalne
  **     - zapis i odczyt bytcode'u
  **     - pomiar szybkości kompilacji i wykonywania kodu
@@ -26,12 +25,14 @@
  */
 
 keyword_t keywords[] = {
-    [KW_IF]     = { "if",       TK_IF    },
-    [KW_ELSE]   = { "else",     TK_ELSE  },
-    [KW_AND]    = { "and",      TK_AND   },
-    [KW_OR]     = { "or",       TK_OR    },
-    [KW_WHILE]  = { "while",    TK_WHILE },
-    [KW_OUT]    = { "out",      TK_CALL  },
+    [KW_IF]     = { "if",       TK_IF     },
+    [KW_ELSE]   = { "else",     TK_ELSE   },
+    [KW_AND]    = { "and",      TK_AND    },
+    [KW_OR]     = { "or",       TK_OR     },
+    [KW_WHILE]  = { "while",    TK_WHILE  },
+    [KW_OUT]    = { "out",      TK_CALL   },
+    [KW_FUN]    = { "fun",      TK_FUN    },
+    [KW_RETURN] = { "return",   TK_RETURN },
 };
 
 /*
@@ -49,6 +50,7 @@ node_handler_t node_handler[] = {
     [TK_CALL]   = { node_call,  NULL,           1  },
     [TK_LPAREN] = { node_group, NULL,           1  },
     [TK_RPAREN] = { NULL,       NULL,           1  },
+    [TK_FUN]    = { node_fun,   NULL,           6  },
     [TK_IF]     = { node_if,    NULL,           6  },
     [TK_ELSE]   = { NULL,       NULL,           6  },
     [TK_WHILE]  = { node_while, NULL,           6  },
@@ -282,7 +284,7 @@ node_t* node_id(lexer_t *lex) {
             return node_error(lex, "Variable table overflow"); 
         }
     }
-    node->val.type = type_num; // Na razie tylko liczby jako zmienne'
+    node->val.type = type_num; // Na razie tylko liczby jako zmienne
     node->id->index = index;
     return node; 
 }
@@ -297,7 +299,7 @@ node_t* node_eval(lexer_t *lex, node_t *node){
         if(!lex->vb[node->id->index].name){
             return node_error(lex, "Unknown identifier");
         }
-        ib_write(lex->ib, OP_VGET, node->id->index);
+        ib_write(lex->ib, OP_GETV, node->id->index);
     }
     else if(!is_num(node->val.type)){
         return node_error(lex, "Not a number");
@@ -403,6 +405,32 @@ node_t* node_call(lexer_t *lex) {
     node->id->len = token.len;
     node->child = expr;
     return builtin[token.kw](lex, node);
+}
+
+/*
+ *  Węzeł definicji funkcji
+ */
+
+node_t* node_fun(lexer_t *lex) {
+    token_t token = lex->token;
+    next_token(lex);
+    if(lex->token.type != TK_ID){
+        return node_error(lex, "Syntax error: incorrect identifier");
+    }
+    node_t *fun = node_id(lex);
+    if(!fun) return NULL;
+    if(lex->vb[fun->id->index].name){
+        return node_error(lex, "Identifier already in use");
+    }
+
+
+    lex->vb[fun->id->index].name = (char*) &lex->db->data[lex->db->size];
+    db_write(lex->db, fun->id->name, fun->id->len);
+    db_write_u8(lex->db, 0);
+    //ib_write(lex->ib, OP_FDEF, left->id->index);
+
+    node_t *node = node_alloc(lex, ND_FUN);
+    return node;
 }
 
 /*
@@ -527,11 +555,12 @@ node_t* node_assign(lexer_t *lex, node_t *left) {
     left->next = right;
 
     if(!lex->vb[left->id->index].name) {
-        lex->vb[left->id->index].name = (char*) &lex->db->data[lex->db->size];
+        ib_write(lex->ib, OP_PUSHA, lex->db->size);
+        ib_write(lex->ib, OP_SETID, left->id->index);
         db_write(lex->db, left->id->name, left->id->len);
         db_write_u8(lex->db, 0);
     }
-    ib_write(lex->ib, OP_VSET, left->id->index);
+    ib_write(lex->ib, OP_SETV, left->id->index);
     return node;
 }
 
@@ -745,8 +774,9 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
         &&op_neg, &&op_band, &&op_bor, &&op_bxor, 
         &&op_bnot, &&op_not, &&op_call, &&op_print,
         &&op_and, &&op_or, &&op_lt, &&op_le,
-        &&op_gt, &&op_ge, &&op_eq, &&op_vset,
-        &&op_vget, &&op_jump, &&op_fjump
+        &&op_gt, &&op_ge, &&op_eq, &&op_setv,
+        &&op_getv, &&op_jump, &&op_fjump, &&op_setid,
+        &&op_pushn, &&op_pusha
     };
 
     #define NEXT() goto *op_table[ib->inst[++pc].opcode]
@@ -820,10 +850,10 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
     op_eq:
         stack[sp-2].num = stack[sp-2].num == stack[sp-1].num; sp--;
         NEXT();
-    op_vset:
+    op_setv:
         vb[arg].val = stack[--sp];
         NEXT();
-    op_vget:
+    op_getv:
         stack[sp++].num = vb[arg].val.num;
         NEXT();
     op_jump:
@@ -835,6 +865,16 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
             goto *op_table[ib->inst[pc].opcode];
         }
         NEXT();
+    op_setid:
+        vb[arg].name = (char*)(db->data + stack[--sp].addr);
+        NEXT();
+    op_pushn:
+        stack[sp++].num = arg;
+        NEXT();
+    op_pusha:
+        stack[sp++].addr = arg;
+        NEXT();
+
 }
 
 /*

@@ -4,6 +4,42 @@
 #include <stdint.h>
 
 typedef enum {
+    TK_EOF = 0,
+    TK_PLUS     = '+',
+    TK_MINUS    = '-',
+    TK_STAR     = '*',
+    TK_SLASH    = '/',
+    TK_PERC     = '%',
+    TK_BAND     = '&',
+    TK_BOR      = '|',
+    TK_BXOR     = '^',
+    TK_TILDE    = '~',
+    TK_LPAREN   = '(',
+    TK_RPAREN   = ')',
+    TK_EQ       = '=',
+    TK_LT       = '<',
+    TK_GT       = '>',
+    TK_EXC      = '!',
+    TK_DELIM    = ';',
+    TK_LBRACE   = '{',
+    TK_RBRACE   = '}',
+    TK_NUM      = 256,
+    TK_STR,
+    TK_ID,
+    TK_IF,
+    TK_ELSE,
+    TK_LE,
+    TK_GE,
+    TK_EQEQ,
+    TK_AND,
+    TK_OR,
+    TK_WHILE,
+    TK_CALL,
+    TK_FUN,
+    TK_RETURN,
+} token_type_t;
+
+typedef enum {
     OP_HALT,
     OP_LOAD,
     OP_ADD,
@@ -27,10 +63,13 @@ typedef enum {
     OP_GT,
     OP_GE,
     OP_EQ,
-    OP_VSET,
-    OP_VGET,
+    OP_SETV,
+    OP_GETV,
     OP_JUMP,
     OP_FJUMP,
+    OP_SETID,
+    OP_PUSHN,
+    OP_PUSHA,
 } opcode_t;
 
 typedef enum {
@@ -40,6 +79,8 @@ typedef enum {
     KW_OR,
     KW_WHILE,
     KW_OUT,
+    KW_FUN,
+    KW_RETURN,
     KEYWORDS_NUM,
 } keyword_type_t;
 
@@ -76,7 +117,7 @@ typedef struct {
     uint32_t size;
     union {
         double num;
-        void *addr;
+        uint64_t addr;
     };
 } val_t;
 
@@ -86,40 +127,6 @@ typedef struct {
 } var_t;
 
 #define VARS_SIZE 256
-
-typedef enum {
-    TK_EOF = 0,
-    TK_PLUS     = '+',
-    TK_MINUS    = '-',
-    TK_STAR     = '*',
-    TK_SLASH    = '/',
-    TK_PERC     = '%',
-    TK_BAND     = '&',
-    TK_BOR      = '|',
-    TK_BXOR     = '^',
-    TK_TILDE    = '~',
-    TK_LPAREN   = '(',
-    TK_RPAREN   = ')',
-    TK_EQ       = '=',
-    TK_LT       = '<',
-    TK_GT       = '>',
-    TK_EXC      = '!',
-    TK_DELIM    = ';',
-    TK_LBRACE   = '{',
-    TK_RBRACE   = '}',
-    TK_NUM      = 256,
-    TK_STR,
-    TK_ID,
-    TK_IF,
-    TK_ELSE,
-    TK_LE,
-    TK_GE,
-    TK_EQEQ,
-    TK_AND,
-    TK_OR,
-    TK_WHILE,
-    TK_CALL,
-} token_type_t;
 
 typedef struct {
     token_type_t type;
@@ -155,13 +162,14 @@ typedef enum {
     ND_VAL,
     ND_ID,
     ND_CALL,
+    ND_FUN,
     ND_IF,
     ND_WHILE,
     ND_ASSIGN,
     ND_BLOCK,
 } node_type_t;
 
-#define is_block(t) (t == ND_BLOCK || t == ND_IF || t == ND_WHILE)
+#define is_block(t) (t == ND_BLOCK || t == ND_IF || t == ND_WHILE || t == ND_FUN)
 #define is_inst(t) (t == ND_CALL || t == ND_ASSIGN)
 
 typedef enum {
@@ -252,6 +260,7 @@ node_t* node_while(lexer_t *lex);
 node_t* node_assign(lexer_t *lex, node_t *left);
 node_t* node_expr(lexer_t *lex, uint8_t rbp);
 node_t* node_block(lexer_t *lex);
+node_t* node_fun(lexer_t *lex);
 node_t* node_error(lexer_t *lex, char *msg);
 node_t* parse(char *expr, dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb);
 void node_print(node_t *node, dbuffer_t *db, int indent);
