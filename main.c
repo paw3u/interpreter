@@ -286,6 +286,11 @@ node_t* node_id(lexer_t *lex) {
     }
     node->val.type = type_num; // Na razie tylko liczby jako zmienne
     node->id->index = index;
+    if(!lex->vb[index].name){
+        lex->vb[index].name = (char*) &lex->db->data[lex->db->size];
+        db_write(lex->db, node->id->name, node->id->len);
+        db_write_u8(lex->db, 0);
+    }
     return node; 
 }
 
@@ -352,7 +357,7 @@ node_t* node_binop(lexer_t *lex, node_t *left) {
 node_t* node_unop(lexer_t *lex) {
     token_type_t op = lex->token.type;
     node_t *expr = node_expr(lex, node_handler[op].lbp);
-    if(!expr) return NULL;
+    if(!node_eval(lex, expr)) return NULL;
     node_t *node = node_alloc(lex, ND_UNOP);
     node->op = op;
     node->child = expr;
@@ -554,12 +559,12 @@ node_t* node_assign(lexer_t *lex, node_t *left) {
     node->child = left;
     left->next = right;
 
-    if(!lex->vb[left->id->index].name) {
-        ib_write(lex->ib, OP_PUSHA, lex->db->size);
-        ib_write(lex->ib, OP_SETID, left->id->index);
-        db_write(lex->db, left->id->name, left->id->len);
-        db_write_u8(lex->db, 0);
-    }
+    //if(!lex->vb[left->id->index].name) {
+    //    ib_write(lex->ib, OP_PUSHA, lex->db->size);
+    //    ib_write(lex->ib, OP_SETID, left->id->index);
+    //    db_write(lex->db, left->id->name, left->id->len);
+    //    db_write_u8(lex->db, 0);
+    //}
     ib_write(lex->ib, OP_SETV, left->id->index);
     return node;
 }
