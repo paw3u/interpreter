@@ -593,7 +593,7 @@ node_t* node_block(lexer_t *lex) {
     node_t *expr = node_expr(lex, node_handler[TK_DELIM].lbp);
     node->child = expr;
     while(1){        
-        if(!expr) break;
+        if(!expr) return NULL;
         if(!is_block(expr->type) && !is_inst(expr->type)){
             return node_error(lex, "Invalid expression");
         }
@@ -608,7 +608,6 @@ node_t* node_block(lexer_t *lex) {
         expr->next = node_expr(lex, node_handler[TK_DELIM].lbp);
         expr = expr->next;
     };
-    return node;
 }
 
 /*
