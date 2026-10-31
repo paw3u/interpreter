@@ -249,15 +249,14 @@ node_t* node_val(lexer_t *lex) {
             node->val.type = type_num;
             node->val.size = sizeof(double);
             node->val.addr = lex->db->size;
-            ib_write(lex->ib, OP_LOAD, lex->db->size);
+            //ib_write(lex->ib, OP_LOAD, lex->db->size);
             db_write(lex->db, &lex->token.num, sizeof(double));
             break;
         case TK_STR:
             node->val.type = type_str;
             node->val.size = lex->token.len + 1;
             node->val.addr = lex->db->size;
-            db_write(lex->db, lex->token.start, lex->token.len);
-            db_write_u8(lex->db, 0);
+            db_write_str(lex->db, lex->token.start, lex->token.len);
             break;
         default:
             return NULL;
@@ -278,7 +277,8 @@ node_t* node_id(lexer_t *lex) {
 
     size_t index = hash(node->id->name, node->id->len, (intptr_t)lex->vb) & (VARS_SIZE - 1);
     size_t start = index;
-    while(lex->vb[index].name && strncmp(lex->vb[index].name, node->id->name, node->id->len)){
+    // Jeżeli ten indeks jest zajęty przez obiekt o innej nazwie, szukamy pierwszego wolnego miejsca
+    while(lex->vb[index].name && strncmp((char*)&lex->db->data[lex->vb[index].name], node->id->name, node->id->len)){
         index = (index + 1) & (VARS_SIZE - 1);
         if(index == start) {
             return node_error(lex, "Variable table overflow"); 
@@ -300,6 +300,9 @@ node_t* node_eval(lexer_t *lex, node_t *node){
             return node_error(lex, "Unknown identifier");
         }
         ib_write(lex->ib, OP_GETV, node->id->index);
+    }
+    else if(node->type == ND_VAL){
+        ib_write(lex->ib, OP_LOAD, node->val.addr);
     }
     else if(!is_num(node->val.type)){
         return node_error(lex, "Not a number");
@@ -409,10 +412,17 @@ node_t* node_call(lexer_t *lex) {
 
 /*
  *  Węzeł definicji funkcji
+ *  
+ *  Przy kompilacji argumenty zapisywane do tablicy nazw jako
+ *  nazwa_funkcji#nazwa_argumentu
+ *   
+ *   
+ * 
+ * 
+ * 
  */
 
 node_t* node_fun(lexer_t *lex) {
-    token_t token = lex->token;
     next_token(lex);
     if(lex->token.type != TK_ID){
         return node_error(lex, "Syntax error: incorrect identifier");
@@ -423,13 +433,22 @@ node_t* node_fun(lexer_t *lex) {
         return node_error(lex, "Identifier already in use");
     }
 
+    uint32_t jump_idx = lex->ib->count;
+    ib_write(lex->ib, OP_JUMP, 0);
 
-    lex->vb[fun->id->index].name = (char*) &lex->db->data[lex->db->size];
-    db_write(lex->db, fun->id->name, fun->id->len);
-    db_write_u8(lex->db, 0);
-    //ib_write(lex->ib, OP_FDEF, left->id->index);
+    lex->vb[fun->id->index].name = lex->db->size;
+    lex->vb[fun->id->index].type = VT_FUN;
+    lex->vb[fun->id->index].sp = lex->ib->count;
+    db_write_str(lex->db, fun->id->name, fun->id->len);
+
+    
+    next_token(lex);
+    if(lex->token.type != TK_LPAREN){
+        return node_error(lex, "'fun' definition error");
+    }
 
     node_t *node = node_alloc(lex, ND_FUN);
+
     return node;
 }
 
@@ -539,26 +558,40 @@ node_t* node_while(lexer_t *lex) {
 
 /*
  *  Węzeł przypisania
+ *
+ *  Po ewaluacji wyrażenia po prawej stronie i pojawieniu się
+ *  wartości na stosie, dodanie operacji przypisania na podstawie
+ *  położenia w tablicy nazw.
+ * 
+ *  Jeżeli jest to pierwsze wystąpienie zmiennej, dodanie jej na
+ *  stos i zapis w tablicy nazw jej bieżącego adresu na stosie.
+ *   
+ *  Na ten momemnt tylko liczby (is_num).
  */
 
 node_t* node_assign(lexer_t *lex, node_t *left) {
     next_token(lex);
     if(left->type != ND_ID) return node_error(lex, "Assignment error");
     token_type_t op = lex->token.type;
-    node_t *right = node_expr(lex, node_handler[op].lbp);
-    if(!right || !is_num(right->val.type)) {
-        return node_error(lex, "Assignment error"); // Na razie tylko liczby jako zmienne
-    }
+    
     node_t *node = node_alloc(lex, ND_ASSIGN);
     node->op = op;
     node->child = left;
-    left->next = right;
+    
     if(!lex->vb[left->id->index].name){
-        lex->vb[left->id->index].name = (char*) &lex->db->data[lex->db->size];
-        db_write(lex->db, left->id->name, left->id->len);
-        db_write_u8(lex->db, 0);
+        lex->vb[left->id->index].name = lex->db->size;
+        db_write_str(lex->db, left->id->name, left->id->len);
+        ib_write(lex->ib, OP_ALLOC, left->id->index);
     }
+    
+    node_t *right = node_expr(lex, node_handler[op].lbp);
+    if(!right || !is_num(right->val.type)) {
+        return node_error(lex, "Assignment error");
+    }
+    if(!node_eval(lex, right)) return NULL;
+    left->next = right;
     ib_write(lex->ib, OP_SETV, left->id->index);
+
     return node;
 }
 
@@ -734,10 +767,12 @@ void ib_free(ibuffer_t *ib){
 
 /*
  *  Bufor danych
+ *  - początkowy rozmiar to 1, a więc wskaźnik na położenie 0
+ *  można traktować jako błędny (na potrzeby var_t)
  */
 
 dbuffer_t db_create() {
-    return (dbuffer_t){ .capacity = 4096, .data = malloc(4096) };
+    return (dbuffer_t){ .capacity = 4096, .data = malloc(4096), .size = 1 };
 }
 
 void db_write(dbuffer_t *db, const void *src, size_t len) {
@@ -759,9 +794,7 @@ void db_free(dbuffer_t *db){
  *  Maszyna wirtualna wykonująca bytecode
  */
 
-void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
-    val_t stack[256];
-    uint32_t sp = 0;
+uint32_t execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb, val_t *stack, uint32_t sp){
     uint32_t pc = 0;
 
     // Musi się zgadzać z opcode_t
@@ -772,8 +805,8 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
         &&op_bnot, &&op_not, &&op_call, &&op_print,
         &&op_and, &&op_or, &&op_lt, &&op_le,
         &&op_gt, &&op_ge, &&op_eq, &&op_setv,
-        &&op_getv, &&op_jump, &&op_fjump, &&op_setid,
-        &&op_pushn, &&op_pusha
+        &&op_getv, &&op_jump, &&op_fjump, &&op_pushn, 
+        &&op_pusha, &&op_alloc
     };
 
     #define NEXT() goto *op_table[ib->inst[++pc].opcode]
@@ -782,8 +815,9 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
     goto *op_table[ib->inst[0].opcode];
 
     op_halt:
-        return;
+        return sp;
     op_load:
+        stack[sp].type = VT_NUM;
         stack[sp++].num = *(double*)(db->data + arg);
         NEXT();
     op_add:
@@ -848,10 +882,10 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
         stack[sp-2].num = stack[sp-2].num == stack[sp-1].num; sp--;
         NEXT();
     op_setv:
-        vb[arg].val = stack[--sp];
+        stack[vb[arg].sp] = stack[--sp];
         NEXT();
     op_getv:
-        stack[sp++].num = vb[arg].val.num;
+        stack[sp++] = stack[vb[arg].sp];
         NEXT();
     op_jump:
         pc = arg;
@@ -862,16 +896,17 @@ void execute(dbuffer_t *db, ibuffer_t *ib, ibuffer_t *fb, var_t *vb){
             goto *op_table[ib->inst[pc].opcode];
         }
         NEXT();
-    op_setid:
-        vb[arg].name = (char*)(db->data + stack[--sp].addr);
-        NEXT();
     op_pushn:
+        stack[sp].type = VT_NUM;
         stack[sp++].num = arg;
         NEXT();
     op_pusha:
         stack[sp++].addr = arg;
         NEXT();
-
+    op_alloc:
+        stack[sp].type = VT_NUM;
+        vb[arg].sp = sp++;
+        NEXT();
 }
 
 /*
@@ -909,6 +944,8 @@ int main(int argc, char *argv[]) {
     var_t vars[VARS_SIZE] = {0};
     dbuffer_t data_buf = db_create();
     ibuffer_t fun_buf = {0};
+    val_t stack[256];
+    uint32_t sp = 0;
 
     if(file != stdin) {
         ibuffer_t inst_buf = {0};
@@ -916,7 +953,7 @@ int main(int argc, char *argv[]) {
         if(root){
             node_print(root, &data_buf, 0);
             ib_write(&inst_buf, OP_HALT, 0);
-            execute(&data_buf, &inst_buf, &fun_buf, vars);
+            sp = execute(&data_buf, &inst_buf, &fun_buf, vars, stack, sp);
             node_free(root); 
         }
         ib_free(&inst_buf);
@@ -930,7 +967,7 @@ int main(int argc, char *argv[]) {
             if(root) {
                 node_print(root, &data_buf, 0);
                 ib_write(&inst_buf, OP_HALT, 0);
-                execute(&data_buf, &inst_buf, &fun_buf, vars);
+                sp = execute(&data_buf, &inst_buf, &fun_buf, vars, stack, sp);
                 node_free(root);
             }
             ib_free(&inst_buf);
